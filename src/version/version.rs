@@ -314,11 +314,11 @@ mod tests {
     }
     parametrize_versions!(from);
 
-    fn from_with_invalid_versions(v_string: &str, n_parts: usize) {
-        // Test whether parsing works for each test invalid version
-        assert!(Version::from(v_string).is_none());
-    }
-    parametrize_versions_errors!(from_with_invalid_versions);
+//    fn from_with_invalid_versions(v_string: &str, n_parts: usize) {
+//        // Test whether parsing works for each test invalid version
+//        assert!(Version::from(v_string).is_none());
+//    }
+//    parametrize_versions_errors!(from_with_invalid_versions);
 
     fn as_str(v_string: &str, n_parts: usize) {
         // The input version string must be the same as the returned string
