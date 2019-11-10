@@ -1,3 +1,5 @@
+use regex::Regex;
+
 use crate::version::VersionPart;
 use crate::version::custom_parts::pep440::PEP440String;
 
@@ -7,6 +9,7 @@ pub fn conda_parser(
 ) -> Option<Vec<VersionPart>> {
     // version len may be a bit wasteful of memory.  Let's start there and tune as necessary.
     let mut parts = Vec::with_capacity(version.len()/2);
+    lazy_static! { static ref LETTER_NUMBER_RE: Regex = Regex::new(r"(\d+)|(\D+)").unwrap(); }
 
     // Split at epoch
     let epoch_split: Vec<&str> = version.split("!").collect();
@@ -37,21 +40,23 @@ pub fn conda_parser(
 
     // Loop over the parts, and parse them
     for part in version_split {
-        println!("{}", part);
         // Skip empty parts
         if part.is_empty() {
             continue;
         }
 
-        // Try to parse the value as an number
-        match part.parse::<i32>() {
-            Ok(number) => {
-                // Push the number part to the vector, and set the has number flag
-                parts.push(VersionPart::Integer(number));
-            }
-            Err(_) => {
-                // Push the text part to the vector
-                parts.push(VersionPart::PEP440String(PEP440String::from(part)));
+        // sub-split to separate numbers and letters that are joined together
+        for m in LETTER_NUMBER_RE.find_iter(part) {
+            let substr: &str = &part[m.start()..m.end()];
+            match substr.parse::<i32>() {
+                Ok(number) => {
+                    // Push the number part to the vector, and set the has number flag
+                    parts.push(VersionPart::Integer(number));
+                }
+                Err(_) => {
+                    // Push the text part to the vector
+                    parts.push(VersionPart::PEP440String(PEP440String::from(substr)));
+                }
             }
         }
     }

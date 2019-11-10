@@ -314,6 +314,13 @@ mod tests {
     }
     parametrize_versions!(from);
 
+    #[test]
+    fn empty_dots() {
+        // Test whether parsing works for each test version
+        let ver = Version::from("..");
+        assert!(ver.is_some());
+    }
+
 //    fn from_with_invalid_versions(v_string: &str, n_parts: usize) {
 //        // Test whether parsing works for each test invalid version
 //        assert!(Version::from(v_string).is_none());
@@ -527,9 +534,9 @@ mod tests {
     # [test]
     fn test_epoch() {
         let a = Version::from("1996.07.12");
-        let b = Version::from("1:0.4.1");
-        let c = Version::from("1:3.4.1");
-        let d = Version::from("2:0.4.1");
+        let b = Version::from("1!0.4.1");
+        let c = Version::from("1!3.4.1");
+        let d = Version::from("2!0.4.1");
         assert_eq!(a < b, true);
         assert_eq!(b < c, true);
         assert_eq!(c < d, true);

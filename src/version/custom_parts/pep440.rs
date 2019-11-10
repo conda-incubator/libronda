@@ -1,59 +1,45 @@
 use std::cmp::Ordering;
 use std::fmt;
 use regex::Regex;
+use unicase::UniCase;
 
 #[derive(Debug, Copy, Clone)]
 pub struct PEP440String<'a> {
-    pre: i16,
     alpha: &'a str,
-    post: i16,
 }
 
 impl<'a> PEP440String<'a> {
-    pub fn from(input: &'a str) -> PEP440String {
-        lazy_static! {
-            static ref RE: Regex = Regex::new(r"^(\d*)([a-zA-Z]*)(\d*)").unwrap();
-        }
-
-        let caps = RE.captures(input).unwrap();
-        let pre: i16 = caps.get(1).map_or(0, |m| match m.as_str().is_empty() {
-            true => 0,
-            false => m.as_str().parse().unwrap()
-        });
-        let alpha = caps.get(2).map_or("", |m| m.as_str());
-        let post: i16 = caps.get(3).map_or(0, |m| match m.as_str().is_empty() {
-            true => 0,
-            false => m.as_str().parse().unwrap()
-        });
-
-        PEP440String{ pre, alpha, post }
+    pub fn from(alpha: &'a str) -> PEP440String {
+        PEP440String{ alpha }
     }
 
     pub fn empty() -> PEP440String<'a> {
-        PEP440String {pre: 0, alpha: "", post: 0}
+        PEP440String {alpha: ""}
     }
 }
 
 fn compare_pep440_str<'a>(left: &'a str, right: &'a str) -> Option<Ordering> {
-    lazy_static! { static ref DEV_RE: Regex = Regex::new("dev").unwrap(); }
-    lazy_static! { static ref POST_RE: Regex = Regex::new("post").unwrap(); }
+    lazy_static! { static ref DEV_RE: Regex = Regex::new("(?i)dev").unwrap(); }
+    lazy_static! { static ref POST_RE: Regex = Regex::new("(?i)post").unwrap(); }
 
-    let is_dev = (DEV_RE.is_match(left), DEV_RE.is_match(right));
-    let is_post = (POST_RE.is_match(left), POST_RE.is_match(right));
-
-    let str_match = left.partial_cmp(right);
-    match str_match {
-        Some(Ordering::Equal) => Some(Ordering::Equal),
-        _ => match is_dev {
-            (false, true) => Some(Ordering::Greater),
-            (true, false) => Some(Ordering::Less),
-            _ => match is_post {
+    // top on the list is post.  It always wins.  Process it first.
+    match (POST_RE.is_match(left), POST_RE.is_match(right)) {
+        (true, true) => Some(Ordering::Equal),
+        (false, true) => Some(Ordering::Less),
+        (true, false) => Some(Ordering::Greater),
+        // Empty strings are when no string value is present for one or the other (release versions)
+        _ => match (left.is_empty(), right.is_empty()) {
+            (true, true) => Some(Ordering::Equal),
+            (false, true) => Some(Ordering::Less),
+            (true, false) => Some(Ordering::Greater),
+            // dev is inverse of post - it always loses
+            _ => match (DEV_RE.is_match(left), DEV_RE.is_match(right)) {
                 (true, true) => Some(Ordering::Equal),
-                (false, true) => Some(Ordering::Less),
-                (true, false) => Some(Ordering::Greater),
+                (false, true) => Some(Ordering::Greater),
+                (true, false) => Some(Ordering::Less),
                 // this is the final fallback to lexicographic sorting, if neither
-                //   dev nor post are in effect
-                (false, false) => left.partial_cmp(right),
+                //   dev nor post are in effect.  Case insensitive comparison here.
+                (false, false) => UniCase::new(left).partial_cmp(&UniCase::new(right)),
             }
         }
     }
@@ -61,17 +47,7 @@ fn compare_pep440_str<'a>(left: &'a str, right: &'a str) -> Option<Ordering> {
 
 impl<'a> PartialOrd for PEP440String<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match self.pre.partial_cmp(&other.pre) {
-            Some(Ordering::Greater) => Some(Ordering::Greater),
-            Some(Ordering::Less) => Some(Ordering::Less),
-            Some(Ordering::Equal) => match compare_pep440_str(self.alpha, &other.alpha) {
-                Some(Ordering::Equal) => self.post.partial_cmp(&other.post),
-                Some(Ordering::Greater) => Some(Ordering::Greater),
-                Some(Ordering::Less) => Some(Ordering::Less),
-                _ => panic!()
-            }
-            _ => panic!()
-        }
+        compare_pep440_str(self.alpha, other.alpha)
     }
 }
 
@@ -83,7 +59,7 @@ impl<'a> PartialEq for PEP440String<'a> {
 
 impl<'a> fmt::Display for PEP440String<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}{}{}", self.pre, self.alpha, self.post)
+        write!(f, "{}", self.alpha)
     }
 }
 
@@ -93,10 +69,27 @@ mod tests {
     use super::PEP440String;
 
     #[test]
-    fn compare_implict_leading_zero() {
-        assert_eq!(PEP440String::from("0dev"), PEP440String::from("dev"));
-        // epoch of any value trumps integer (priority)
-        // assert!(VersionPart::Epoch(value: 0) > VersionPart::Integer(value: 1);
-        // assert!(Version::Epoch{0} > Version::String{"abc"});
+    fn compare_dev_less_alpha() {
+        assert_eq!(PEP440String::from("dev") < PEP440String::from("alpha"), true);
+    }
+
+    #[test]
+    fn compare_lexicographic_default() {
+        assert_eq!(PEP440String::from("a") < PEP440String::from("d"), true);
+    }
+
+    #[test]
+    fn compare_post_greater_later() {
+        assert_eq!(PEP440String::from("z") < PEP440String::from("post"), true);
+    }
+
+    #[test]
+    fn compare_post_greater_empty() {
+        assert_eq!(PEP440String::from("") < PEP440String::from("post"), true);
+    }
+
+    #[test]
+    fn compare_empty_greater_alpha() {
+        assert_eq!(PEP440String::from("a") < PEP440String::from(""), true);
     }
 }
