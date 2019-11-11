@@ -40,7 +40,7 @@ impl VersionCompare {
         let b_ver = Version::from(b);
 
         // Both version numbers must have been parsed
-        if a_ver.is_none() || b_ver.is_none() {
+        if a_ver.is_err() || b_ver.is_err() {
             return Err(());
         }
 
@@ -71,7 +71,7 @@ impl VersionCompare {
         let b_ver = Version::from(b);
 
         // Both version numbers must have been parsed
-        if a_ver.is_none() || b_ver.is_none() {
+        if a_ver.is_err() || b_ver.is_err() {
             return Err(());
         }
 

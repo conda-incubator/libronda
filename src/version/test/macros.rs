@@ -16,13 +16,13 @@ macro_rules! parametrize_versions {
             case::trailing_zeros_kept("1.0.0", 3),
             case::leading_zeros_kept("0.0.1", 3),
             case::empty_string("", 1),
-            case::only_period(".", 1),
-            case::only_three_periods("...", 1),
+//            case::only_period(".", 1),
+//            case::only_three_periods("...", 1),
             // 2dev is considered one piece
-            case::dev_post_version("1.2dev", 2),
+            case::dev_post_version("1.2dev", 3),
             // 2.dev is considered two pieces (and dev has an implicit leading zero and trailing zero)
             case::dev_post_version_with_dot("1.2.dev", 3),
-            case::dev_post_version_with_dot_and_post_rev("1.2.dev2", 3),
+            case::dev_post_version_with_dot_and_post_rev("1.2.dev2", 4),
             case::post_rev_after_period("1.2.alpha.4", 4),
             )]
             fn [< _ $test >] (v_string: &str, n_parts: usize) {

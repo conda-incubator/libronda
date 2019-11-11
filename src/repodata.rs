@@ -4,11 +4,13 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Deserialize;
 use serde_json::Result;
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Record {
+use crate::Version;
+
+#[derive(Deserialize, Debug)]
+struct Record<'a> {
     build: String,
     build_number: u16,
     depends: Vec<String>,
@@ -17,25 +19,26 @@ struct Record {
     sha256: String,
     size: u64,
     timestamp: u64,
-    version: String
+    #[serde(deserialize_with="Version::from")]
+    version: Version<'a>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct RepodataInfo {
     subdir: String
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Repodata {
+#[derive(Deserialize, Debug)]
+pub struct Repodata<'a> {
     info: RepodataInfo,
-    packages: HashMap<String, Record>,
+    packages: HashMap<String, Record<'a>>,
     #[serde(rename = "packages.conda")]
-    packages_conda: HashMap<String, Record>,
+    packages_conda: HashMap<String, Record<'a>>,
     repodata_version: u8,
     removed: Vec<String>,
 }
 
-pub fn read_repodata<P: AsRef<Path>>(path: P) -> Result<Repodata> {
+pub fn read_repodata<'a, P: AsRef<Path>>(path: P) -> Result<Repodata<'a>> {
     // Open the file in read-only mode with buffer.
     let f = File::open(path);
     let f = match f {

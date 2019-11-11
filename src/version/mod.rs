@@ -6,6 +6,7 @@
 pub mod parsers;
 pub mod custom_parts;
 pub mod comp_op;
+pub mod errors;
 pub mod version;
 pub mod version_compare;
 pub mod version_part;
