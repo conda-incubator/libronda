@@ -1,10 +1,11 @@
 use crate::version::version_part::VersionPart;
+use crate::version::errors::VersionParsingError;
 
 /// Split the given version string, in it's version parts.
 /// TODO: Move this method to some sort of helper class, maybe as part of `VersionPart`.
 pub fn default_parser(
     version: &str,
-) -> Option<Vec<VersionPart>> {
+) -> Result<Vec<VersionPart>, VersionParsingError> {
     // Split the version string, and create a vector to put the parts in
     // TODO: split at specific separators instead
     let split = version.split(|c| !char::is_alphanumeric(c));
@@ -35,5 +36,5 @@ pub fn default_parser(
     }
 
     // Return the list of parts
-    Some(parts)
+    Ok(parts)
 }

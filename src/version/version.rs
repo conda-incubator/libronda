@@ -10,12 +10,10 @@ use std::fmt;
 use std::iter::Peekable;
 use std::slice::Iter;
 
-use serde::de::{self, Deserialize, Deserializer, Visitor, SeqAccess, MapAccess};
-
 use super::comp_op::CompOp;
 use super::version_part::{VersionPart, ProvideEmptyImpl};
 use super::parsers::conda::conda_parser;
-use super::errors::ParsingError;
+use super::errors::VersionParsingError;
 
 /// Version struct, which is a representation for a parsed version string.
 ///
@@ -46,7 +44,7 @@ impl<'a> Version<'a> {
     ///
     /// assert_eq!(ver.compare(&Version::from("1.2.3").unwrap()), CompOp::Eq);
     /// ```
-    pub fn from(version: &'a str) -> Result<Self, ParsingError> {
+    pub fn from(version: &'a str) -> Result<Self, VersionParsingError> {
         Version::parse(version, &conda_parser)
     }
 
@@ -64,9 +62,11 @@ impl<'a> Version<'a> {
     ///
     /// assert_eq!(ver.compare(&Version::from("1.2.3").unwrap()), CompOp::Eq);
     /// ```
-    pub fn parse(version: &'a str, parser: &dyn Fn(&'a str) -> Option<Vec<VersionPart<'a>>>) -> Result<Self, ParsingError> {
-        let parts: Vec<VersionPart<'a>> = parser(version)?;
-        Ok(Self { version, parts })
+    pub fn parse(version: &'a str, parser: &dyn Fn(&'a str) -> Result<Vec<VersionPart<'a>>, VersionParsingError>) -> Result<Self, VersionParsingError> {
+        match parser(version) {
+            Ok(parts) => Ok(Self { version, parts}),
+            Err(E) => Err(E)
+        }
     }
 
     /// Get the original version string.
@@ -293,16 +293,9 @@ mod tests {
     // TODO: This doesn't really test whether this method fully works
     fn from(v_string: &str, n_parts: usize) {
         // Test whether parsing works for each test version
-        assert!(Version::from(v_string).is_some());
+        assert!(Version::from(v_string).is_ok());
     }
     parametrize_versions!(from);
-
-    #[test]
-    fn empty_dots() {
-        // Test whether parsing works for each test version
-        let ver = Version::from("..");
-        assert!(ver.is_some());
-    }
 
 //    fn from_with_invalid_versions(v_string: &str, n_parts: usize) {
 //        // Test whether parsing works for each test invalid version

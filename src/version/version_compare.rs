@@ -86,7 +86,6 @@ mod tests {
     use crate::CompOp;
 
     use crate::version::VersionCompare;
-    use crate::version::Version;
 
     fn compare(a: &str, b: &str, operator: &CompOp) {
         match VersionCompare::compare(a, b) == Ok(operator.clone()) {

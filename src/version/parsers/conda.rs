@@ -2,12 +2,12 @@ use regex::Regex;
 
 use crate::version::VersionPart;
 use crate::version::custom_parts::pep440::PEP440String;
-use crate::version::errors::ParsingError;
+use crate::version::errors::VersionParsingError;
 
 /// Split the given version string, in it's version parts.
 pub fn conda_parser(
     version: &str,
-) -> Result<Vec<VersionPart>, ParsingError> {
+) -> Result<Vec<VersionPart>, VersionParsingError> {
     // version len may be a bit wasteful of memory.  Let's start there and tune as necessary.
     let mut parts = Vec::with_capacity(version.len()/2);
     lazy_static! { static ref LETTER_NUMBER_RE: Regex = Regex::new(r"(\d+)|(\D+)").unwrap(); }
@@ -22,7 +22,8 @@ pub fn conda_parser(
         1 => {
             epoch_split[0]
         },
-        _ => return Err("Duplicated epoch separator (!)")
+        // "Duplicated epoch separator (!)"
+        _ => return Err(VersionParsingError)
     };
 
     // Get any local version string
@@ -30,7 +31,8 @@ pub fn conda_parser(
     let local: &str = match local_version_split.len() {
         1 => "",
         2 => local_version_split[1],
-        _ => return Err("duplicated local version separator (+)")
+        // "duplicated local version separator (+)"
+        _ => return Err(VersionParsingError)
     };
 
     // Split at periods
