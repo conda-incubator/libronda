@@ -86,7 +86,7 @@ impl Version {
         let owned_version = version.to_string();
         match parser(&owned_version) {
             Ok(parts) => Ok(Self { version: owned_version, parts}),
-            Err(E) => Err(E)
+            Err(e) => Err(e)
         }
     }
 

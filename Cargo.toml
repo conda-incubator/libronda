@@ -16,3 +16,11 @@ regex = "1.3"
 rstest = "0.4"
 paste = "0.1"
 unicase = "2.5"
+
+[dependencies.pyo3]
+version = "0.8"
+features = ["extension-module"]
+
+[lib]
+name = "libronda"
+crate-type = ["cdylib"]

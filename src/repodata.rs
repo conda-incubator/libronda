@@ -27,7 +27,7 @@ fn deserialize_json_str_to_version<'de, D>(deserializer: D) -> Result<Version, D
     let s: &str = Deserialize::deserialize(deserializer)?;
     match Version::parse(s, &conda_parser) {
         Ok(v) => Ok(v),
-        Err(E) => Err(de::Error::custom("Version parsing error"))
+        Err(e) => Err(de::Error::custom("Version parsing error"))
     }
 }
 
