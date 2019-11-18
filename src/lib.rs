@@ -15,5 +15,4 @@ mod repodata;
 pub use crate::version::CompOp;
 pub use crate::version::Version;
 pub use crate::version::VersionPart;
-pub use crate::version::VersionCompare;
 pub use crate::version::conda_parser;

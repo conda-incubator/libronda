@@ -9,6 +9,10 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::iter::Peekable;
 use std::slice::Iter;
+use std::str::FromStr;
+use std::convert::From;
+
+use serde::Deserialize;
 
 use super::comp_op::CompOp;
 use super::version_part::{VersionPart, ProvideEmptyImpl};
@@ -25,33 +29,51 @@ use super::errors::VersionParsingError;
 /// representation, the returned value is generated.
 ///
 /// The struct provides many methods for comparison and probing.
-pub struct Version<'a> {
-    version: &'a str,
-    parts: Vec<VersionPart<'a>>,
+#[derive(Deserialize)]
+pub struct Version {
+    version: String,
+    parts: Vec<VersionPart>,
 }
 
-impl<'a> Version<'a> {
-    /// Create a `Version` instance from a version string.
-    ///
-    /// The version string should be passed to the `version` parameter.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use libronda::{CompOp, Version};
-    ///
-    /// let ver = Version::from("1.2.3").unwrap();
-    ///
-    /// assert_eq!(ver.compare(&Version::from("1.2.3").unwrap()), CompOp::Eq);
-    /// ```
-    pub fn from(version: &'a str) -> Result<Self, VersionParsingError> {
-        Version::parse(version, &conda_parser)
-    }
+impl FromStr for Version {
+    type Err = VersionParsingError;
 
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        /// Create a `Version` instance from a version string.
+        ///
+        /// The version string should be passed to the `version` parameter.  Takes ownership of `version`
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use libronda::{CompOp, Version};
+        ///
+        /// let ver: Version = "1.2.3".parse()?;
+        /// ```
+        Version::parse(s, &conda_parser)
+    }
+}
+
+impl From<&str> for Version {
+    fn from(s: &str) -> Version {
+        Version::parse(s, &conda_parser).unwrap()
+    }
+}
+
+//impl<'a> From<&'a str> for &'a Version {
+//    fn from(s: &str) -> & Version {
+//        let v: Version = Version::parse(s, &conda_parser).unwrap();
+//        &v
+//    }
+//}
+
+impl Version {
     /// Create a `Version` instance from a version string with the given `parser` function.
     ///
     /// The version string should be passed to the `version` parameter.  Additional parsers
     /// are in the "parsers" module.  This is the primary means of customizing behavior.
+    ///
+    /// Note that the string reference passed in here is moved with to_string().
     ///
     /// # Examples
     ///
@@ -59,12 +81,11 @@ impl<'a> Version<'a> {
     /// use libronda::{CompOp, Version, conda_parser};
     ///
     /// let ver = Version::parse("1.2.3", &conda_parser).unwrap();
-    ///
-    /// assert_eq!(ver.compare(&Version::from("1.2.3").unwrap()), CompOp::Eq);
     /// ```
-    pub fn parse(version: &'a str, parser: &dyn Fn(&'a str) -> Result<Vec<VersionPart<'a>>, VersionParsingError>) -> Result<Self, VersionParsingError> {
-        match parser(version) {
-            Ok(parts) => Ok(Self { version, parts}),
+    pub fn parse(version: &str, parser: &dyn Fn(&str) -> Result<Vec<VersionPart>, VersionParsingError>) -> Result<Self, VersionParsingError> {
+        let owned_version = version.to_string();
+        match parser(&owned_version) {
+            Ok(parts) => Ok(Self { version: owned_version, parts}),
             Err(E) => Err(E)
         }
     }
@@ -76,7 +97,7 @@ impl<'a> Version<'a> {
     /// ```
     /// use libronda::Version;
     ///
-    /// let ver = Version::from("1.2.3").unwrap();
+    /// let ver: Version = "1.2.3".parse().unwrap();
     ///
     /// assert_eq!(ver.as_str(), "1.2.3");
     /// ```
@@ -92,13 +113,13 @@ impl<'a> Version<'a> {
     /// ```
     /// use libronda::{Version, VersionPart};
     ///
-    /// let ver = Version::from("1.2.3").unwrap();
+    /// let ver: Version = "1.2.3".parse().unwrap();
     ///
     /// assert_eq!(ver.part(0), Ok(&VersionPart::Integer(1)));
     /// assert_eq!(ver.part(1), Ok(&VersionPart::Integer(2)));
     /// assert_eq!(ver.part(2), Ok(&VersionPart::Integer(3)));
     /// ```
-    pub fn part(&self, index: usize) -> Result<&VersionPart<'a>, ()> {
+    pub fn part(&self, index: usize) -> Result<&VersionPart, ()> {
         // Make sure the index is in-bound
         if index >= self.parts.len() {
             return Err(());
@@ -115,7 +136,7 @@ impl<'a> Version<'a> {
     /// ```
     /// use libronda::{Version, VersionPart};
     ///
-    /// let ver = Version::from("1.2.3").unwrap();
+    /// let ver: Version = "1.2.3".parse().unwrap();
     ///
     /// assert_eq!(ver.parts(), &vec![
     ///     VersionPart::Integer(1),
@@ -134,8 +155,8 @@ impl<'a> Version<'a> {
     /// ```
     /// use libronda::Version;
     ///
-    /// let ver_a = Version::from("1.2.3").unwrap();
-    /// let ver_b = Version::from("1.2.3.4").unwrap();
+    /// let ver_a: Version = "1.2.3".into();
+    /// let ver_b: Version = "1.2.3.4".into();
     ///
     /// assert_eq!(ver_a.part_count(), 3);
     /// assert_eq!(ver_b.part_count(), 4);
@@ -159,14 +180,16 @@ impl<'a> Version<'a> {
     /// ```
     /// use libronda::{CompOp, Version};
     ///
-    /// assert_eq!(Version::from("1.2").unwrap().compare(&Version::from("1.3.2").unwrap()), CompOp::Lt);
-    /// assert_eq!(Version::from("1.9").unwrap().compare(&Version::from("1.9").unwrap()), CompOp::Eq);
-    /// assert_eq!(Version::from("0.3.0.0").unwrap().compare(&Version::from("0.3").unwrap()), CompOp::Eq);
-    /// assert_eq!(Version::from("2").unwrap().compare(&Version::from("1.7.3").unwrap()), CompOp::Gt);
+    /// let a: Version = "1.2".parse().unwrap();
+    /// let b: Version = "2".parse().unwrap();
+    /// assert_eq!(a.compare("1.3.2".into()), CompOp::Lt);
+    /// assert_eq!(a.compare("1.2.0".into()), CompOp::Eq);
+    /// assert_eq!(b.compare("1.7.3".into()), CompOp::Gt);
     /// ```
-    pub fn compare(&self, other: &'a Version) -> CompOp {
+    pub fn compare(&self, other: &Version) -> CompOp {
         // Compare the versions with their peekable iterators
-        Self::compare_iter(self.parts.iter().peekable(), other.parts.iter().peekable())
+        Self::compare_iter(self.parts.iter().peekable(),
+                           other.parts.iter().peekable())
     }
 
     /// Compare this version to the given `other` version,
@@ -179,14 +202,15 @@ impl<'a> Version<'a> {
     /// ```
     /// use libronda::{CompOp, Version};
     ///
-    /// assert!(Version::from("1.2").unwrap().compare_to(&Version::from("1.3.2").unwrap(), &CompOp::Lt));
-    /// assert!(Version::from("1.2").unwrap().compare_to(&Version::from("1.3.2").unwrap(), &CompOp::Le));
-    /// assert!(Version::from("1.2").unwrap().compare_to(&Version::from("1.2").unwrap(), &CompOp::Eq));
-    /// assert!(Version::from("1.2").unwrap().compare_to(&Version::from("1.2").unwrap(), &CompOp::Le));
+    /// let a: Version = "1.2".parse().unwrap();
+    /// assert!(a.compare_to("1.3.2".into(), &CompOp::Lt));
+    /// assert!(a.compare_to("1.3.2".into(), &CompOp::Le));
+    /// assert!(a.compare_to("1.2".into(), &CompOp::Eq));
+    /// assert!(a.compare_to("1.2".into(), &CompOp::Le));
     /// ```
     pub fn compare_to(&self, other: &Version, operator: &CompOp) -> bool {
         // Get the comparison result
-        let result = self.compare(&other);
+        let result = self.compare(other);
 
         // Match the result against the given operator
         match result {
@@ -251,14 +275,14 @@ impl<'a> Version<'a> {
 }
 
 
-impl<'a> fmt::Display for Version<'a> {
+impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.version)
     }
 }
 
 // Show just the version component parts as debug output
-impl<'a> fmt::Debug for Version<'a> {
+impl fmt::Debug for Version {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
             write!(f, "{:#?}", self.parts)
@@ -269,15 +293,15 @@ impl<'a> fmt::Debug for Version<'a> {
 }
 
 /// Implement the partial ordering trait for the version struct, to easily allow version comparison.
-impl<'a> PartialOrd for Version<'a> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Version) -> Option<Ordering> {
         self.compare(other).ord()
     }
 }
 
 /// Implement the partial equality trait for the version struct, to easily allow version comparison.
-impl<'a> PartialEq for Version<'a> {
-    fn eq(&self, other: &Self) -> bool {
+impl PartialEq for Version {
+    fn eq(&self, other: &Version) -> bool {
         self.compare_to(other, &CompOp::Eq)
     }
 }
@@ -289,11 +313,13 @@ mod tests {
     // use crate::version_part::VersionPart;
 
     use super::Version;
+    use crate::version::errors::VersionParsingError;
 
     // TODO: This doesn't really test whether this method fully works
     fn from(v_string: &str, n_parts: usize) {
         // Test whether parsing works for each test version
-        assert!(Version::from(v_string).is_ok());
+        let result: Result<Version, VersionParsingError> = v_string.parse();
+        assert!(result.is_ok());
     }
     parametrize_versions!(from);
 
@@ -304,14 +330,15 @@ mod tests {
 //    parametrize_versions_errors!(from_with_invalid_versions);
 
     fn as_str(v_string: &str, n_parts: usize) {
+        let v: Version = v_string.parse().unwrap();
         // The input version string must be the same as the returned string
-        assert_eq!(Version::from(v_string).unwrap().as_str(), v_string);
+        assert_eq!(v.as_str(), v_string);
     }
     parametrize_versions!(as_str);
 
     fn part(v_string: &str, n_parts: usize) {
         // Create a version object
-        let ver = Version::from(v_string).unwrap();
+        let ver: Version = v_string.parse().unwrap();
 
         // Loop through each part
         for i in 0..n_parts {
@@ -324,21 +351,23 @@ mod tests {
     parametrize_versions!(part);
 
     fn parts(v_string: &str, n_parts: usize) {
+        let v: Version = v_string.parse().unwrap();
         // The number of parts must match
-        assert_eq!(Version::from(v_string).unwrap().parts().len(), n_parts);
+        assert_eq!(v.parts().len(), n_parts);
     }
     parametrize_versions!(parts);
 
     fn part_count(v_string: &str, n_parts: usize) {
-            // The number of parts must match the metadata
-            assert_eq!(Version::from(v_string).unwrap().part_count(), n_parts);
+        let v: Version = v_string.parse().unwrap();
+        // The number of parts must match the metadata
+        assert_eq!(v.part_count(), n_parts);
     }
     parametrize_versions!(part_count);
 
     fn compare(a: &str, b: &str, operator: &CompOp) {
         // Get both versions
-        let version_a = Version::from(a).unwrap();
-        let version_b = Version::from(b).unwrap();
+        let version_a: Version = a.parse().unwrap();
+        let version_b: Version = b.parse().unwrap();
 
         // Compare them
         assert_eq!(
@@ -350,8 +379,8 @@ mod tests {
 
     fn compare_to(a: &str, b: &str, operator: &CompOp) {
         // Get both versions
-        let version_a = Version::from(a).unwrap();
-        let version_b = Version::from(b).unwrap();
+        let version_a: Version = a.parse().unwrap();
+        let version_b: Version = b.parse().unwrap();
 
         // Test
         assert!(version_a.compare_to(&version_b, operator));
@@ -364,20 +393,21 @@ mod tests {
     #[test]
     fn compare_to_neq() {
         // Assert an exceptional case, compare to not equal
-        assert!(Version::from("1.2")
-            .unwrap()
-            .compare_to(&Version::from("1.2.3").unwrap(), &CompOp::Ne,));
+        let a: Version = "1.2".into();
+        assert!(a.compare_to(&"1.2.3".into(), &CompOp::Ne));
     }
 
     #[test]
     fn display() {
-        assert_eq!(format!("{}", Version::from("1.2.3").unwrap()), "1.2.3");
+        let a: Version = "1.2.3".into();
+        assert_eq!(format!("{}", a), "1.2.3");
     }
 
     #[test]
     fn debug() {
+        let a: Version = "1.2.3".into();
         assert_eq!(
-            format!("{:?}", Version::from("1.2.3").unwrap()),
+            format!("{:?}", a),
             "[Integer(1), Integer(2), Integer(3)]",
         );
 //        assert_eq!(
@@ -388,8 +418,8 @@ mod tests {
 
     fn partial_cmp(a: &str, b: &str, operator: &CompOp) {
         // Get both versions
-        let version_a = Version::from(a).unwrap();
-        let version_b = Version::from(b).unwrap();
+        let version_a: Version = a.parse().unwrap();
+        let version_b: Version = b.parse().unwrap();
 
         // Compare and assert
         match operator {
@@ -409,8 +439,8 @@ mod tests {
         }
 
         // Get both versions
-        let version_a = Version::from(a).unwrap();
-        let version_b = Version::from(b).unwrap();
+        let version_a: Version = a.parse().unwrap();
+        let version_b: Version = b.parse().unwrap();
 
         // Determine what the result should be
         let result = match operator {
@@ -426,23 +456,25 @@ mod tests {
     #[test]
     fn partial_eq_neq() {
         // Assert an exceptional case, compare to not equal
-        assert!(Version::from("1.2").unwrap() != Version::from("1.2.3").unwrap());
+        let a: Version = "1.2".parse().unwrap();
+        assert_eq!(a, "1.2".into());
+        assert_ne!(a, "1.2.3".into());
     }
 
     # [test]
     fn test_less_specific_less_than_more_specific() {
         // 0.4 < 0.4.0
-        let a = Version::from("0.4").unwrap();
-        let b = Version::from("0.4.0").unwrap();
+        let a: Version = "0.4".parse().unwrap();
+        let b: Version = "0.4.0".parse().unwrap();
         assert_eq!(a == b, true);
     }
 
     # [test]
     fn test_rc_greater_than_earlier_version_less_than_release() {
         // 0.4.0 < 0.4.1.rc < 0.4.1
-        let a = Version::from("0.4.0").unwrap();
-        let b = Version::from("0.4.1.rc").unwrap();
-        let c = Version::from("0.4.1").unwrap();
+        let a: Version = "0.4.0".parse().unwrap();
+        let b: Version = "0.4.1.rc".parse().unwrap();
+        let c: Version = "0.4.1".parse().unwrap();
         assert_eq!(a < b, true);
         assert_eq!(b < c, true);
     }
@@ -450,35 +482,35 @@ mod tests {
     # [test]
     fn test_case_insensitive_rc() {
         // 0.4.1.rc == 0.4.1.RC
-        let a = Version::from("0.4.1.rc").unwrap();
-        let b = Version::from("0.4.1.RC").unwrap();
+        let a: Version = "0.4.1.rc".parse().unwrap();
+        let b: Version = "0.4.1.RC".parse().unwrap();
         assert_eq!(a == b, true);
     }
 
     # [test]
     fn test_lexicographical_sort_numbers() {
         // 0.5a1 < 0.5a2
-        let a = Version::from("0.5a1").unwrap();
-        let b = Version::from("0.5a2").unwrap();
+        let a: Version = "0.5a1".parse().unwrap();
+        let b: Version = "0.5a2".parse().unwrap();
         assert_eq!(a < b, true);
     }
 
     # [test]
     fn test_lexicographical_sort() {
         // 0.5a2 < 0.5b1
-        let a = Version::from("0.5a2").unwrap();
-        let b = Version::from("0.5b1").unwrap();
+        let a: Version = "0.5a2".parse().unwrap();
+        let b: Version = "0.5b1".parse().unwrap();
         assert_eq!(a < b, true);
     }
 
     # [test]
     fn test_dev_special_case_horribleness() {
         // 1.0 < 1.1dev1 < 1.1a1 < 1.1.0dev1 == 1.1.dev1
-        let a = Version::from("1.0").unwrap();
-        let b = Version::from("1.1dev1").unwrap();
-        let c = Version::from("1.1a1").unwrap();
-        let d = Version::from("1.1.0dev1").unwrap();
-        // let e = Version::from("1.1.dev1");
+        let a: Version = "1.0".parse().unwrap();
+        let b: Version = "1.1dev1".parse().unwrap();
+        let c: Version = "1.1a1".parse().unwrap();
+        let d: Version = "1.1.0dev1".parse().unwrap();
+        // let e: Version = "1.1.dev1");
         assert_eq!(a < b, true);
         assert_eq!(b < c, true);
         assert_eq!(c < d, true);
@@ -488,10 +520,10 @@ mod tests {
 
     # [test]
     fn test_rc_with_number() {
-        let a = Version::from("1.1.dev1").unwrap();
-        let b = Version::from("1.1.a1").unwrap();
-        let c = Version::from("1.1.0rc1").unwrap();
-        let d = Version::from("1.1.0").unwrap();
+        let a: Version = "1.1.dev1".parse().unwrap();
+        let b: Version = "1.1.a1".parse().unwrap();
+        let c: Version = "1.1.0rc1".parse().unwrap();
+        let d: Version = "1.1.0".parse().unwrap();
         assert_eq!(a < b, true);
         assert_eq!(b < c, true);
         assert_eq!(c < d, true);
@@ -499,9 +531,9 @@ mod tests {
 
     # [test]
     fn test_post_gt_release() {
-        let a = Version::from("1.1.0").unwrap();
-        let b = Version::from("1.1.0post1").unwrap();
-        let c = Version::from("1996.07.12").unwrap();
+        let a: Version = "1.1.0".parse().unwrap();
+        let b: Version = "1.1.0post1".parse().unwrap();
+        let c: Version = "1996.07.12".parse().unwrap();
         assert_eq!(a == b, false);
         assert_eq!(a > b, false);
         assert_eq!(a < b, true);
@@ -510,10 +542,10 @@ mod tests {
 
     # [test]
     fn test_epoch() {
-        let a = Version::from("1996.07.12").unwrap();
-        let b = Version::from("1!0.4.1").unwrap();
-        let c = Version::from("1!3.4.1").unwrap();
-        let d = Version::from("2!0.4.1").unwrap();
+        let a: Version = "1996.07.12".parse().unwrap();
+        let b: Version = "1!0.4.1".parse().unwrap();
+        let c: Version = "1!3.4.1".parse().unwrap();
+        let d: Version = "2!0.4.1".parse().unwrap();
         assert_eq!(a < b, true);
         assert_eq!(b < c, true);
         assert_eq!(c < d, true);

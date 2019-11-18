@@ -2,19 +2,20 @@ use std::cmp::Ordering;
 use std::fmt;
 use regex::Regex;
 use unicase::UniCase;
+use serde::Deserialize;
 
-#[derive(Debug, Copy, Clone)]
-pub struct PEP440String<'a> {
-    alpha: &'a str,
+#[derive(Deserialize, Debug, Clone)]
+pub struct PEP440String {
+    alpha: String,
 }
 
-impl<'a> PEP440String<'a> {
-    pub fn from(alpha: &'a str) -> PEP440String {
-        PEP440String{ alpha }
+impl PEP440String {
+    pub fn from(alpha: &str) -> PEP440String {
+        PEP440String{ alpha: alpha.to_string() }
     }
 
-    pub fn empty() -> PEP440String<'a> {
-        PEP440String {alpha: ""}
+    pub fn empty() -> PEP440String {
+        PEP440String {alpha: "".to_string()}
     }
 }
 
@@ -45,19 +46,19 @@ fn compare_pep440_str<'a>(left: &'a str, right: &'a str) -> Option<Ordering> {
     }
 }
 
-impl<'a> PartialOrd for PEP440String<'a> {
+impl PartialOrd for PEP440String {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        compare_pep440_str(self.alpha, other.alpha)
+        compare_pep440_str(&self.alpha, &other.alpha)
     }
 }
 
-impl<'a> PartialEq for PEP440String<'a> {
+impl PartialEq for PEP440String {
     fn eq(&self, other: &Self) -> bool {
         self.partial_cmp(&other).unwrap() == Ordering::Equal
     }
 }
 
-impl<'a> fmt::Display for PEP440String<'a> {
+impl fmt::Display for PEP440String {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.alpha)
     }

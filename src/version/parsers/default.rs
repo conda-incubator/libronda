@@ -26,7 +26,7 @@ pub fn default_parser(
             }
             Err(_) => {
                 // Push the text part to the vector
-                parts.push(VersionPart::LexicographicString(part));
+                parts.push(VersionPart::LexicographicString(part.to_string()));
             }
         }
     }

@@ -7,15 +7,17 @@
 use std::cmp::Ordering;
 use std::fmt;
 
+use serde::Deserialize;
+
 use super::custom_parts::pep440::PEP440String;
 use std::fmt::{Debug, Display};
 
-#[derive(Copy, Clone)]
-pub enum VersionPart<'a> {
+#[derive(Deserialize, Clone)]
+pub enum VersionPart {
     Epoch(i16),
     Integer(i32),
-    LexicographicString(&'a str),
-    PEP440String(PEP440String<'a>),
+    LexicographicString(String),
+    PEP440String(PEP440String),
     Empty,
 }
 
@@ -23,19 +25,19 @@ pub trait ProvideEmptyImpl{
     fn get_empty(&self) -> VersionPart;
 }
 
-impl<'a> ProvideEmptyImpl for VersionPart<'a> {
+impl ProvideEmptyImpl for VersionPart {
     fn get_empty(&self) -> VersionPart {
         match self {
             VersionPart::Epoch(_i) => VersionPart::Epoch(0),
             VersionPart::Integer(_i) => VersionPart::Integer(0),
-            VersionPart::LexicographicString(_i) => VersionPart::LexicographicString(""),
+            VersionPart::LexicographicString(_i) => VersionPart::LexicographicString(String::new()),
             VersionPart::PEP440String(_i) => VersionPart::PEP440String(PEP440String::empty()),
             VersionPart::Empty => VersionPart::Empty
         }
     }
 }
 
-impl<'a> Debug for VersionPart<'a> {
+impl Debug for VersionPart {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             VersionPart::Epoch(_i) => write!(f, "Epoch({})", _i),
@@ -47,13 +49,13 @@ impl<'a> Debug for VersionPart<'a> {
     }
 }
 
-impl<'a> Display for VersionPart<'a> {
+impl Display for VersionPart {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-impl<'a> PartialOrd for VersionPart<'a> {
+impl PartialOrd for VersionPart {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
             (VersionPart::Epoch(a), VersionPart::Epoch(b)) => a.partial_cmp(b),
@@ -62,25 +64,25 @@ impl<'a> PartialOrd for VersionPart<'a> {
             (VersionPart::PEP440String(a), VersionPart::PEP440String(b)) => a.partial_cmp(b),
             // Match simple position in the list, but reverse it because things at the top are higher
             _ => Some(match self {
-                &VersionPart::Epoch(_a) => 0,
-                &VersionPart::Integer(_a) => 1,
-                &VersionPart::LexicographicString(_a) => 2,
-                &VersionPart::PEP440String(_a) => 3,
-                &VersionPart::Empty => 4,
+                VersionPart::Epoch(_a) => 0,
+                VersionPart::Integer(_a) => 1,
+                VersionPart::LexicographicString(_a) => 2,
+                VersionPart::PEP440String(_a) => 3,
+                VersionPart::Empty => 4,
             }.partial_cmp(
                 match other {
-                    &VersionPart::Epoch(_a) => &0,
-                    &VersionPart::Integer(_a) => &1,
-                    &VersionPart::LexicographicString(_a) => &2,
-                    &VersionPart::PEP440String(_a) => &3,
-                    &VersionPart::Empty => &4,
+                    VersionPart::Epoch(_a) => &0,
+                    VersionPart::Integer(_a) => &1,
+                    VersionPart::LexicographicString(_a) => &2,
+                    VersionPart::PEP440String(_a) => &3,
+                    VersionPart::Empty => &4,
                 }
             ).unwrap().reverse())
         }
     }
 }
 
-impl<'a> PartialEq for VersionPart<'a> {
+impl PartialEq for VersionPart {
     fn eq(&self, other: &Self) -> bool {
         self.partial_cmp(other) == Some(Ordering::Equal)
     }

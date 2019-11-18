@@ -22,8 +22,7 @@ pub fn conda_parser(
         1 => {
             epoch_split[0]
         },
-        // "Duplicated epoch separator (!)"
-        _ => return Err(VersionParsingError)
+        _ => return Err(VersionParsingError::DuplicatedEpochCharacter)
     };
 
     // Get any local version string
@@ -31,8 +30,7 @@ pub fn conda_parser(
     let local: &str = match local_version_split.len() {
         1 => "",
         2 => local_version_split[1],
-        // "duplicated local version separator (+)"
-        _ => return Err(VersionParsingError)
+        _ => return Err(VersionParsingError::DuplicatedLocalSeparatorCharacter)
     };
 
     // Split at periods
