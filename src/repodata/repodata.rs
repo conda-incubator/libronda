@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::{Version, conda_parser};
 
 #[derive(Deserialize, Debug)]
-struct Record {
+pub struct Record {
     build: String,
     build_number: u16,
     depends: Vec<String>,
@@ -27,12 +27,12 @@ fn deserialize_json_str_to_version<'de, D>(deserializer: D) -> Result<Version, D
     let s: &str = Deserialize::deserialize(deserializer)?;
     match Version::parse(s, &conda_parser) {
         Ok(v) => Ok(v),
-        Err(e) => Err(de::Error::custom("Version parsing error"))
+        Err(_e) => Err(de::Error::custom("Version parsing error"))
     }
 }
 
 #[derive(Deserialize, Debug)]
-struct RepodataInfo {
+pub struct RepodataInfo {
     subdir: String
 }
 

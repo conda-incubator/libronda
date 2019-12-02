@@ -316,7 +316,7 @@ mod tests {
     use crate::version::errors::VersionParsingError;
 
     // TODO: This doesn't really test whether this method fully works
-    fn from(v_string: &str, n_parts: usize) {
+    fn from(v_string: &str, _n_parts: usize) {
         // Test whether parsing works for each test version
         let result: Result<Version, VersionParsingError> = v_string.parse();
         assert!(result.is_ok());
@@ -329,7 +329,7 @@ mod tests {
 //    }
 //    parametrize_versions_errors!(from_with_invalid_versions);
 
-    fn as_str(v_string: &str, n_parts: usize) {
+    fn as_str(v_string: &str, _n_parts: usize) {
         let v: Version = v_string.parse().unwrap();
         // The input version string must be the same as the returned string
         assert_eq!(v.as_str(), v_string);

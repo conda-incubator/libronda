@@ -99,6 +99,7 @@ macro_rules! parametrize_versions_set {
 //            case::snapshot_lt_alpha_dot("snapshot.1.2.3", "1.2.3.alpha", &CompOp::Lt),
 //            case::snapshot_lt_alpha_dash("snapshot-1.2.3", "1.2.3-alpha", &CompOp::Lt),
             )]
+            #[allow(non_snake_case)]
             fn [< _ $test>] (a: &str, b: &str, operator: &CompOp) {
                 $test(a, b, operator)
             }
@@ -106,20 +107,20 @@ macro_rules! parametrize_versions_set {
     }
 }
 
-/// List of invalid version sets for dynamic tests
-macro_rules! parametrize_errors_set {
-    ( $test:ident ) => {
-        paste::item! {
-            #[rstest_parametrize(a, b, operator,
-            case::wrong_operator_lt("1.2.3", "1.2.3", &CompOp::Lt),
-            case::wrong_operator_ne("1.2", "1.2.0.0", &CompOp::Ne),
-            case::dev_alone_is_not_eq("1.2.3.dev", "dev", &CompOp::Eq),
-            // not an error, conda considers alpha lower than numbers
-            //case("snapshot", "1", &CompOp::Lt),
-            )]
-            fn [< _ $test>] (a: &str, b: &str, operator: &CompOp) {
-                $test(a, b, operator)
-            }
-        }
-    }
-}
+// List of invalid version sets for dynamic tests
+//macro_rules! parametrize_errors_set {
+//    ( $test:ident ) => {
+//        paste::item! {
+//            #[rstest_parametrize(a, b, operator,
+//            case::wrong_operator_lt("1.2.3", "1.2.3", &CompOp::Lt),
+//            case::wrong_operator_ne("1.2", "1.2.0.0", &CompOp::Ne),
+//            case::dev_alone_is_not_eq("1.2.3.dev", "dev", &CompOp::Eq),
+//            // not an error, conda considers alpha lower than numbers
+//            //case("snapshot", "1", &CompOp::Lt),
+//            )]
+//            fn [< _ $test>] (a: &str, b: &str, operator: &CompOp) {
+//                $test(a, b, operator)
+//            }
+//        }
+//    }
+//}
