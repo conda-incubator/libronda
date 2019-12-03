@@ -9,6 +9,7 @@ pub mod comp_op;
 pub mod errors;
 pub mod version;
 pub mod version_part;
+pub mod matching;
 
 pub use self::comp_op::CompOp;
 pub use self::version::Version;
