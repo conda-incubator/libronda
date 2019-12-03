@@ -1,8 +1,12 @@
 from setuptools import setup
 from setuptools_rust import Binding, RustExtension
 
-setup(name='libronda',
-      version="0.1.0",
-      rust_extensions=[RustExtension('libronda', 'Cargo.toml',  binding=Binding.PyO3)],
-      test_suite="tests",
-      zip_safe=False)
+setup(
+      name="ronda",
+      version="1.0",
+      rust_extensions=[RustExtension("ronda._ronda",
+                                     binding=Binding.RustCPython)],
+      packages=["ronda"],
+      # rust extensions are not zip safe, just like C-extensions.
+      zip_safe=False,
+)

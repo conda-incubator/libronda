@@ -34,10 +34,10 @@ pub fn conda_parser(
     };
 
     // Split at periods
-    let mut version_split: Vec<&str> = local_version_split[0].split(|c| c == '_' || c == '.')
+    let mut version_split: Vec<&str> = local_version_split[0].split(|c| c == '_' ||
+                                                                             c == '.' ||
+                                                                             c == '-')
         .collect();
-    let local_split: Vec<&str> = local.split(|c| c == '_' || c == '.').collect();
-    version_split.extend(local_split);
 
     // Loop over the parts, and parse them
     for part in version_split {
@@ -60,6 +60,10 @@ pub fn conda_parser(
                 }
             }
         }
+    }
+
+    if !local.is_empty() {
+        parts.push(VersionPart::LexicographicString(local.to_string()));
     }
 
     if parts.is_empty() && version.is_empty() {

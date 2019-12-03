@@ -192,6 +192,27 @@ impl Version {
                            other.parts.iter().peekable())
     }
 
+    pub fn startswith(&self, other: &Version) -> bool {
+        let mut iter = self.parts.iter().peekable();
+        let mut other_iter = other.parts.iter().peekable();
+        // Iterate over the iterator, without consuming it
+        loop {
+            let i1 = &iter.next();
+            let i2 = &other_iter.next();
+            match (i1, i2) {
+                (Some(i), Some(j)) => match i.partial_cmp(j) {
+                    Some(Ordering::Equal) => continue,
+                    _ => false
+                },
+                // ran out of other, startswith is true
+                (Some(i), None) => return true,
+                // both versions are the same length and are equal for all values
+                (None, None) => return true,
+                _ => return false,
+            };
+        }
+    }
+
     /// Compare this version to the given `other` version,
     /// and check whether the given comparison operator is valid.
     ///

@@ -1,2 +1,3 @@
 pub mod conda;
-pub mod default;
+// not used.  Simpler scheme.
+// pub mod default;
