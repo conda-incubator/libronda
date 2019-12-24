@@ -33,7 +33,7 @@ py_class!(class RustyVersion |py| {
         RustyVersion::create_instance(py, arg.into())
     }
     def __richcmp__(&self, other: &RustyVersion, op: CompareOp) -> PyResult<bool> {
-        Ok(self.rust_version(py).compare_to(other.rust_version(py), &op.into()))
+        Ok(self.rust_version(py).compare_to_version(other.rust_version(py), &op.into()))
     }
     def __repr__(&self) -> PyResult<String> {
         Ok(self.rust_version(py).as_str().to_string())

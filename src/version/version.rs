@@ -46,7 +46,7 @@ impl FromStr for Version {
         /// # Examples
         ///
         /// ```
-        /// use libronda::{CompOp, Version};
+        /// use ronda::{CompOp, Version};
         ///
         /// let ver: Version = "1.2.3".parse()?;
         /// ```
@@ -67,6 +67,7 @@ impl From<&str> for Version {
 //    }
 //}
 
+// May need clone/copy here
 impl Version {
     /// Create a `Version` instance from a version string with the given `parser` function.
     ///
@@ -78,7 +79,7 @@ impl Version {
     /// # Examples
     ///
     /// ```
-    /// use libronda::{CompOp, Version, conda_parser};
+    /// use ronda::{CompOp, Version, conda_parser};
     ///
     /// let ver = Version::parse("1.2.3", &conda_parser).unwrap();
     /// ```
@@ -95,7 +96,7 @@ impl Version {
     /// # Examples
     ///
     /// ```
-    /// use libronda::Version;
+    /// use ronda::Version;
     ///
     /// let ver: Version = "1.2.3".parse().unwrap();
     ///
@@ -111,7 +112,7 @@ impl Version {
     /// # Examples
     ///
     /// ```
-    /// use libronda::{Version, VersionPart};
+    /// use ronda::{Version, VersionPart};
     ///
     /// let ver: Version = "1.2.3".parse().unwrap();
     ///
@@ -134,7 +135,7 @@ impl Version {
     /// # Examples
     ///
     /// ```
-    /// use libronda::{Version, VersionPart};
+    /// use ronda::{Version, VersionPart};
     ///
     /// let ver: Version = "1.2.3".parse().unwrap();
     ///
@@ -153,7 +154,7 @@ impl Version {
     /// # Examples
     ///
     /// ```
-    /// use libronda::Version;
+    /// use ronda::Version;
     ///
     /// let ver_a: Version = "1.2.3".into();
     /// let ver_b: Version = "1.2.3.4".into();
@@ -163,6 +164,12 @@ impl Version {
     /// ```
     pub fn part_count(&self) -> usize {
         self.parts.len()
+    }
+
+    pub fn compare_version(&self, other: &Version) -> CompOp {
+        // Compare the versions with their peekable iterators
+        Self::compare_iter(self.parts.iter().peekable(),
+                           other.parts.iter().peekable())
     }
 
     /// Compare this version to the given `other` version.
@@ -178,18 +185,15 @@ impl Version {
     /// # Examples:
     ///
     /// ```
-    /// use libronda::{CompOp, Version};
+    /// use ronda::{CompOp, Version};
     ///
     /// let a: Version = "1.2".parse().unwrap();
     /// let b: Version = "2".parse().unwrap();
-    /// assert_eq!(a.compare("1.3.2".into()), CompOp::Lt);
-    /// assert_eq!(a.compare("1.2.0".into()), CompOp::Eq);
-    /// assert_eq!(b.compare("1.7.3".into()), CompOp::Gt);
-    /// ```
-    pub fn compare(&self, other: &Version) -> CompOp {
-        // Compare the versions with their peekable iterators
-        Self::compare_iter(self.parts.iter().peekable(),
-                           other.parts.iter().peekable())
+    /// assert_eq!(a.compare_str("1.3.2"), CompOp::Lt);
+    /// assert_eq!(a.compare_str("1.2.0"), CompOp::Eq);
+    /// assert_eq!(b.compare_str("1.7.3"), CompOp::Gt);
+    pub fn compare_str(&self, other: &str) -> CompOp {
+        self.compare_version(&other.into())
     }
 
     pub fn startswith(&self, other: &Version) -> bool {
@@ -205,7 +209,7 @@ impl Version {
                     _ => false
                 },
                 // ran out of other, startswith is true
-                (Some(i), None) => return true,
+                (Some(_), None) => return true,
                 // both versions are the same length and are equal for all values
                 (None, None) => return true,
                 _ => return false,
@@ -213,25 +217,9 @@ impl Version {
         }
     }
 
-    /// Compare this version to the given `other` version,
-    /// and check whether the given comparison operator is valid.
-    ///
-    /// All comparison operators can be used.
-    ///
-    /// # Examples:
-    ///
-    /// ```
-    /// use libronda::{CompOp, Version};
-    ///
-    /// let a: Version = "1.2".parse().unwrap();
-    /// assert!(a.compare_to("1.3.2".into(), &CompOp::Lt));
-    /// assert!(a.compare_to("1.3.2".into(), &CompOp::Le));
-    /// assert!(a.compare_to("1.2".into(), &CompOp::Eq));
-    /// assert!(a.compare_to("1.2".into(), &CompOp::Le));
-    /// ```
-    pub fn compare_to(&self, other: &Version, operator: &CompOp) -> bool {
+    pub fn compare_to_version(&self, other: &Version, operator: &CompOp) -> bool {
         // Get the comparison result
-        let result = self.compare(other);
+        let result = self.compare_version(other);
 
         // Match the result against the given operator
         match result {
@@ -249,6 +237,26 @@ impl Version {
             },
             _ => unreachable!(),
         }
+    }
+
+    /// Compare this version to the given `other` version,
+    /// and check whether the given comparison operator is valid.
+    ///
+    /// All comparison operators can be used.
+    ///
+    /// # Examples:
+    ///
+    /// ```
+    /// use ronda::{CompOp, Version};
+    ///
+    /// let a: Version = "1.2".parse().unwrap();
+    /// assert!(a.compare_to_str("1.3.2", &CompOp::Lt));
+    /// assert!(a.compare_to_str("1.3.2", &CompOp::Le));
+    /// assert!(a.compare_to_str("1.2", &CompOp::Eq));
+    /// assert!(a.compare_to_str("1.2", &CompOp::Le));
+    /// ```
+    pub fn compare_to_str(&self, other: &str, operator: &CompOp) -> bool {
+        self.compare_to_version(&other.into(), operator)
     }
 
     /// Compare two version numbers based on the iterators of their version parts.
@@ -316,14 +324,14 @@ impl fmt::Debug for Version {
 /// Implement the partial ordering trait for the version struct, to easily allow version comparison.
 impl PartialOrd for Version {
     fn partial_cmp(&self, other: &Version) -> Option<Ordering> {
-        self.compare(other).ord()
+        self.compare_version(other).ord()
     }
 }
 
 /// Implement the partial equality trait for the version struct, to easily allow version comparison.
 impl PartialEq for Version {
     fn eq(&self, other: &Version) -> bool {
-        self.compare_to(other, &CompOp::Eq)
+        self.compare_to_version(other, &CompOp::Eq)
     }
 }
 
@@ -392,7 +400,13 @@ mod tests {
 
         // Compare them
         assert_eq!(
-            version_a.compare(&version_b),
+            version_a.compare_version(&version_b),
+            operator.clone(),
+        );
+
+        // Compare them
+        assert_eq!(
+            version_a.compare_str(b),
             operator.clone(),
         );
     }
@@ -401,13 +415,12 @@ mod tests {
     fn compare_to(a: &str, b: &str, operator: &CompOp) {
         // Get both versions
         let version_a: Version = a.parse().unwrap();
-        let version_b: Version = b.parse().unwrap();
 
         // Test
-        assert!(version_a.compare_to(&version_b, operator));
+        assert!(version_a.compare_to_str(b, operator));
 
         // Make sure the inverse operator is not correct
-        assert_eq!(version_a.compare_to(&version_b, &operator.invert()), false);
+        assert_eq!(version_a.compare_to_str(b, &operator.invert()), false);
     }
     parametrize_versions_set!(compare_to);
 
@@ -415,7 +428,7 @@ mod tests {
     fn compare_to_neq() {
         // Assert an exceptional case, compare to not equal
         let a: Version = "1.2".into();
-        assert!(a.compare_to(&"1.2.3".into(), &CompOp::Ne));
+        assert!(a.compare_to_str("1.2.3", &CompOp::Ne));
     }
 
     #[test]

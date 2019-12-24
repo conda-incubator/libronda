@@ -53,7 +53,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::from_sign("=="), Ok(CompOp::Eq));
     /// assert_eq!(CompOp::from_sign("<"), Ok(CompOp::Lt));
@@ -79,7 +79,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::from_name("eq"), Ok(CompOp::Eq));
     /// assert_eq!(CompOp::from_name("lt"), Ok(CompOp::Lt));
@@ -118,7 +118,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::Eq.name(), "eq");
     /// assert_eq!(CompOp::Lt.name(), "lt");
@@ -146,7 +146,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::Eq.as_inverted(), CompOp::Ne);
     /// assert_eq!(CompOp::Lt.as_inverted(), CompOp::Ge);
@@ -167,7 +167,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::Eq.invert(), CompOp::Ne);
     /// assert_eq!(CompOp::Lt.invert(), CompOp::Ge);
@@ -195,7 +195,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::Eq.as_opposite(), CompOp::Ne);
     /// assert_eq!(CompOp::Lt.as_opposite(), CompOp::Gt);
@@ -216,7 +216,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::Eq.opposite(), CompOp::Ne);
     /// assert_eq!(CompOp::Lt.opposite(), CompOp::Gt);
@@ -244,7 +244,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::Eq.as_flipped(), CompOp::Eq);
     /// assert_eq!(CompOp::Lt.as_flipped(), CompOp::Gt);
@@ -265,7 +265,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::Eq.flip(), CompOp::Eq);
     /// assert_eq!(CompOp::Lt.flip(), CompOp::Gt);
@@ -299,7 +299,7 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::CompOp;
+    /// use ronda::CompOp;
     ///
     /// assert_eq!(CompOp::Eq.sign(), "==");
     /// assert_eq!(CompOp::Lt.sign(), "<");
@@ -328,13 +328,13 @@ impl CompOp {
     /// # Examples
     ///
     /// ```
-    /// use libronda::Version;
+    /// use ronda::Version;
     ///
-    /// let ver_a = Version::from("1.2.3").unwrap();
-    /// let ver_b = Version::from("1.3").unwrap();
+    /// let ver_a: Version = "1.2.3".into();
+    /// let ver_b: Version = "1.3".into();
     ///
-    /// assert_eq!(ver_a.compare(&ver_b).factor(), -1);
-    /// assert_eq!(10 * ver_b.compare(&ver_a).factor(), 10);
+    /// assert_eq!(ver_a.compare_version(&ver_b).factor(), -1);
+    /// assert_eq!(10 * ver_b.compare_version(&ver_a).factor(), 10);
     /// ```
     pub fn factor(&self) -> i8 {
         match self {
@@ -358,12 +358,12 @@ impl CompOp {
     ///
     /// ```
     /// use std::cmp::Ordering;
-    /// use libronda::Version;
+    /// use ronda::Version;
     ///
-    /// let ver_a = Version::from("1.2.3").unwrap();
-    /// let ver_b = Version::from("1.3").unwrap();
+    /// let ver_a: Version = "1.2.3".into();
+    /// let ver_b: Version = "1.3".into();
     ///
-    /// assert_eq!(ver_a.compare(&ver_b).ord().unwrap(), Ordering::Less);
+    /// assert_eq!(ver_a.compare_version(&ver_b).ord().unwrap(), Ordering::Less);
     /// ```
     pub fn ord(&self) -> Option<Ordering> {
         match self {

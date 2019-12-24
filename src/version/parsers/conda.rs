@@ -34,9 +34,9 @@ pub fn conda_parser(
     };
 
     // Split at periods
-    let mut version_split: Vec<&str> = local_version_split[0].split(|c| c == '_' ||
-                                                                             c == '.' ||
-                                                                             c == '-')
+    let version_split: Vec<&str> = local_version_split[0].split(|c| c == '_' ||
+                                                                         c == '.' ||
+                                                                         c == '-')
         .collect();
 
     // Loop over the parts, and parse them

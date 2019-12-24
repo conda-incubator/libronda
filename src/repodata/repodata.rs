@@ -8,16 +8,16 @@ use crate::{Version, conda_parser};
 
 #[derive(Deserialize, Debug)]
 pub struct Record {
-    build: String,
-    build_number: u16,
-    depends: Vec<String>,
-    md5: String,
-    name: String,
-    sha256: String,
-    size: u64,
-    timestamp: u64,
+    pub build: String,
+    pub build_number: u16,
+    pub depends: Vec<String>,
+    pub md5: String,
+    pub name: String,
+    pub sha256: String,
+    pub size: u64,
+    pub timestamp: u64,
     #[serde(deserialize_with="deserialize_json_str_to_version")]
-    version: Version,
+    pub version: Version,
 }
 
 fn deserialize_json_str_to_version<'de, D>(deserializer: D) -> Result<Version, D::Error>
@@ -33,17 +33,17 @@ fn deserialize_json_str_to_version<'de, D>(deserializer: D) -> Result<Version, D
 
 #[derive(Deserialize, Debug)]
 pub struct RepodataInfo {
-    subdir: String
+    pub subdir: String
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Repodata {
-    info: RepodataInfo,
-    packages: HashMap<String, Record>,
+    pub info: RepodataInfo,
+    pub packages: HashMap<String, Record>,
     #[serde(rename = "packages.conda")]
-    packages_conda: HashMap<String, Record>,
-    repodata_version: u8,
-    removed: Vec<String>,
+    pub packages_conda: HashMap<String, Record>,
+    pub repodata_version: u8,
+    pub removed: Vec<String>,
 }
 
 pub fn read_repodata<'a, P: AsRef<Path>>(path: P) -> Result<Repodata, serde_json::error::Error> {
