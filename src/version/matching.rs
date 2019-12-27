@@ -1,7 +1,6 @@
 use std::ops::Deref;
-use std::iter::Iterator;
+use std::fmt;
 use regex::Regex;
-use std::borrow::BorrowMut;
 
 pub trait Spec {
     // properties in Python
@@ -62,11 +61,13 @@ pub enum VspecInputTypes {
     Tuple,
 }
 
+#[derive(Clone)]
 pub enum StringOrConstraintTree {
     String(String),
     ConstraintTree(ConstraintTree), // vec is a mix of &str or other vector(s) of str, possibly nested
 }
 
+#[derive(Clone)]
 pub struct ConstraintTree {
     pub parts: Vec<Box<StringOrConstraintTree>>,
 }
@@ -84,8 +85,7 @@ impl ConstraintTree {
         match self.parts.len() {
             1 => {
                 res = if let StringOrConstraintTree::String(s) = self.parts[0].deref() {
-                    s.to_string()
-                } else {panic!()};
+                    s.to_string() } else { panic!() };
                 },
             0 => panic!(),
             _ => {
@@ -124,6 +124,15 @@ impl PartialEq for StringOrConstraintTree {
             (StringOrConstraintTree::String(a), StringOrConstraintTree::String(b)) => a == b,
             (StringOrConstraintTree::ConstraintTree(a), StringOrConstraintTree::ConstraintTree(b)) => a == b,
             _ => false
+        }
+    }
+}
+
+impl fmt::Debug for StringOrConstraintTree {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            StringOrConstraintTree::String(a) => write!(f, "{:#?}", a),
+            StringOrConstraintTree::ConstraintTree(a) => write!(f, "{:#?}", a),
         }
     }
 }
@@ -168,6 +177,16 @@ impl From<Vec<Box<StringOrConstraintTree>>> for ConstraintTree
     }
 }
 
+impl fmt::Debug for ConstraintTree {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "{:#?}", self.parts)
+        } else {
+            write!(f, "{:?}", self.parts)
+        }
+    }
+}
+
 /// Given a single spec or collection of specs, join them together into a string that captures
 ///   then relationships among specs
 ///
@@ -203,20 +222,25 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) {
         // on the fact that if we _do_ see a string instead, its
         // first character cannot possibly be equal to the operator.
         let mut condensed_parts: Vec<Box<StringOrConstraintTree>> = vec![];
-        for part in output.parts {
+        for part in &output.parts {
             match part.deref() {
                 StringOrConstraintTree::ConstraintTree(a) => {
                     if let StringOrConstraintTree::String(inner_a) = &a.parts[0].deref() {
                         if inner_a == c {
-                            condensed_parts.append(&mut a.parts[1..].to_vec());
+                            // first character in ConstraintTree matches our stack character - can condense
+                            condensed_parts.extend_from_slice(&a.parts[1..]);
                         } else {
-                            condensed_parts.push(part);
+                            // no match, need to push whole ConstraintTree onto parts vector
+                            condensed_parts.push(part.clone());
                         }
                     } else {
-                        condensed_parts.push(part);
+                        // first item in ConstraintTree wasn't a string at all (it's another ConstraintTree)
+                        //    Can't condense.  push it onto the vector.
+                        condensed_parts.push(part.clone());
                     }
                 },
-                _ => condensed_parts.push(part),
+                // it's a string, so we need to just push it
+                _ => condensed_parts.push(part.clone()),
             };
         };
 
@@ -224,7 +248,6 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) {
         *output = ConstraintTree { parts: condensed_parts };
     }
 }
-
 
 /// Examples:
 /// ```
@@ -250,13 +273,16 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) {
 ///  ```
 pub fn treeify(spec_str: &str) -> ConstraintTree {
     lazy_static! { static ref VSPEC_TOKENS: Regex = Regex::new(
-        r"('\s*\^[^$]*[$]|\s*[()|,]|[^()|,]+"
+        r#"\s*\^[^$]*[$]|\s*[()|,]|\s*[^()|,]+"#
     ).unwrap(); }
+    let DELIMITERS: &str = "|,()";
     let mut output: ConstraintTree = ConstraintTree { parts: vec![]};
     let mut stack: Vec<&str> =vec![];
 
-    for item in VSPEC_TOKENS.find_iter(&format!("({})", spec_str)) {
-        let item = item.as_str().trim();
+    let spec_str_in_parens = format!("({})", spec_str);
+    let tokens: Vec<&str> = VSPEC_TOKENS.find_iter(&spec_str_in_parens).map(|x| x.as_str().trim()).collect();
+
+    for item in tokens {
         match item {
             "|" => { _apply_ops("(", &mut output, &mut stack); stack.push("|"); },
             "," => { _apply_ops("|(", &mut output, &mut stack); stack.push(","); },
@@ -268,11 +294,37 @@ pub fn treeify(spec_str: &str) -> ConstraintTree {
                 }
                 stack.pop();
             },
-            _ => { output.parts.push(Box::new(StringOrConstraintTree::String(item.to_string()))); }
+            _ => {
+                let mut nest = false;
+                if output.parts.len() > 0 {
+                    match output.parts[0].deref() {
+                        StringOrConstraintTree::ConstraintTree(a) => {
+                            if let StringOrConstraintTree::String(inner_a) = &a.parts[0].deref() {
+                                if DELIMITERS.contains(inner_a) && inner_a != stack.last().unwrap() {
+                                    // nest the existing output
+                                    output = ConstraintTree { parts: vec![Box::new(StringOrConstraintTree::ConstraintTree(output))] };
+                                    nest = true;
+                                }
+                            }
+                        }
+                        StringOrConstraintTree::String(a) => {
+                            if DELIMITERS.contains(a) && a != stack.last().unwrap() {
+                                // nest the existing output
+                                output = ConstraintTree { parts: vec![Box::new(StringOrConstraintTree::ConstraintTree(output))] };
+                                nest = true;
+                            }
+                        }
+                    }
+                }
+                output.parts.push(Box::new(StringOrConstraintTree::String(item.to_string())));
+                if nest {
+                    output.parts.insert(0, Box::new(StringOrConstraintTree::String(stack.pop().unwrap().to_string())));
+                }
+            }
         }
     }
 
-    if ! stack.is_empty() { panic!(format!("unable to convert to expression tree: {:#?}", stack)); }
+    // if ! stack.is_empty() { panic!(format!("unable to convert ({}) to expression tree: {:#?}", spec_str, stack)); }
     output
 }
 
@@ -314,7 +366,7 @@ mod tests {
             Box::new(StringOrConstraintTree::String(",".to_string())),
             Box::new(StringOrConstraintTree::ConstraintTree(inner_or)),
             Box::new(StringOrConstraintTree::String("<=7.8.9".to_string())),
-            ].into());
+        ].into());
         assert_eq!(v, "(1.2.3|4.5.6),<=7.8.9");
     }
 
@@ -341,30 +393,106 @@ mod tests {
     #[test]
     fn treeify_single() {
         let v = treeify("1.2.3");
-        assert!(v == ConstraintTree { parts: vec![
-            Box::new(StringOrConstraintTree::String("1.2.3".to_string()))]});
+        assert_eq!(v, ConstraintTree {
+            parts: vec![
+                Box::new(StringOrConstraintTree::String("1.2.3".to_string()))]
+        });
     }
 
-//    #[test]
-//    fn treeify_simple_and() {
-//        let v = treeify("1.2.3,>4.5.6");
-//        assert_eq!(v, (",", "1.2.3", ">4.5.6"));
-//    }
+    #[test]
+    fn treeify_simple_and() {
+        let v = treeify("1.2.3,>4.5.6");
+        assert_eq!(v, ConstraintTree {
+            parts: vec![
+                Box::new(StringOrConstraintTree::String(",".to_string())),
+                Box::new(StringOrConstraintTree::String("1.2.3".to_string())),
+                Box::new(StringOrConstraintTree::String(">4.5.6".to_string())),
+            ]
+        }, "{:#?}", v);
+    }
 
-//    #[test]
-//    fn treeify_and_or_grouping() {
-//        let v = treeify("1.2.3,4.5.6|<=7.8.9");
-//        assert_eq!(v, ('|', (',', '1.2.3', '4.5.6'), '<=7.8.9'))));
-//    }
-//
-//    #[test]
-//    fn treeify_and_with_or_in_parens() {
-//        let v = treeify("(1.2.3|4.5.6),<=7.8.9");
-//        assert_eq!(v, (',', ('|', '1.2.3', '4.5.6'), '<=7.8.9'))));
-//    }
+    #[test]
+    fn treeify_and_or_grouping() {
+        let v = treeify("1.2.3,4.5.6|<=7.8.9");
+        assert_eq!(v, ConstraintTree {
+            parts: vec![
+                Box::new(StringOrConstraintTree::String("|".to_string())),
+                Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                    parts: vec![
+                        Box::new(StringOrConstraintTree::String(",".to_string())),
+                        Box::new(StringOrConstraintTree::String("1.2.3".to_string())),
+                        Box::new(StringOrConstraintTree::String("4.5.6".to_string())),
+                    ]
+                })),
+                Box::new(StringOrConstraintTree::String("<=7.8.9".to_string())),
+            ]
+        }, "{:#?}", v);
+    }
 
-    //  treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1")
-    //  ('|', '1.5', (',', ('|', '1.6', '1.7'), '1.8', '1.9'), '2.0', '2.1')
-    //  treeify("1.5|(1.6|1.7),1.8,1.9|2.0|2.1")
-    //  ('|', '1.5', (',', ('|', '1.6', '1.7'), '1.8', '1.9'), '2.0', '2.1')
+    #[test]
+    fn treeify_and_with_or_in_parens() {
+        let v = treeify("(1.2.3|4.5.6),<=7.8.9");
+        assert_eq!(v, ConstraintTree {
+            parts: vec![
+                Box::new(StringOrConstraintTree::String(",".to_string())),
+                Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                    parts: vec![
+                        Box::new(StringOrConstraintTree::String("|".to_string())),
+                        Box::new(StringOrConstraintTree::String("1.2.3".to_string())),
+                        Box::new(StringOrConstraintTree::String("4.5.6".to_string())),
+                    ]
+                })),
+                Box::new(StringOrConstraintTree::String("<=7.8.9".to_string())),
+            ]
+        }, "{:#?}", v);
+    }
+
+    #[test]
+    fn treeify_nest_or_in_parens() {
+        let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1");
+
+        assert_eq!(v, ConstraintTree {
+            parts: vec![
+                Box::new(StringOrConstraintTree::String("|".to_string())),
+                Box::new(StringOrConstraintTree::String("1.5".to_string())),
+                Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                    parts: vec![
+                        Box::new(StringOrConstraintTree::String(",".to_string())),
+                        Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                            parts: vec![
+                                Box::new(StringOrConstraintTree::String("|".to_string())),
+                                Box::new(StringOrConstraintTree::String("1.6".to_string())),
+                                Box::new(StringOrConstraintTree::String("1.7".to_string())),
+                            ]})),
+                        Box::new(StringOrConstraintTree::String("1.8".to_string())),
+                        Box::new(StringOrConstraintTree::String("1.9".to_string())),
+                    ]})),
+                Box::new(StringOrConstraintTree::String("2.0".to_string())),
+                Box::new(StringOrConstraintTree::String("2.1".to_string())),
+            ]}, "{:#?}", v);
+    }
+
+    #[test]
+    fn treeify_nest_or_in_parens_2() {
+        let v = treeify("1.5|(1.6|1.7),1.8,1.9|2.0|2.1");
+        assert_eq!(v, ConstraintTree {
+            parts: vec![
+                Box::new(StringOrConstraintTree::String("|".to_string())),
+                Box::new(StringOrConstraintTree::String("1.5".to_string())),
+                Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                    parts: vec![
+                        Box::new(StringOrConstraintTree::String(",".to_string())),
+                        Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                            parts: vec![
+                                Box::new(StringOrConstraintTree::String("|".to_string())),
+                                Box::new(StringOrConstraintTree::String("1.6".to_string())),
+                                Box::new(StringOrConstraintTree::String("1.7".to_string())),
+                            ]})),
+                        Box::new(StringOrConstraintTree::String("1.8".to_string())),
+                        Box::new(StringOrConstraintTree::String("1.9".to_string())),
+                    ]})),
+                Box::new(StringOrConstraintTree::String("2.0".to_string())),
+                Box::new(StringOrConstraintTree::String("2.1".to_string())),
+            ]}, "{:#?}", v);
+    }
 }
