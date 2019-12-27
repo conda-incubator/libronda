@@ -1,6 +1,7 @@
 use std::ops::Deref;
 use std::fmt;
 use regex::Regex;
+use petgraph::algo::condensation;
 
 pub trait Spec {
     // properties in Python
@@ -69,17 +70,18 @@ pub enum StringOrConstraintTree {
 
 #[derive(Clone)]
 pub struct ConstraintTree {
+    pub combinator: Combinator,
     pub parts: Vec<Box<StringOrConstraintTree>>,
 }
 
-impl ConstraintTree {
-    fn isand(&self) -> bool {
-        self.parts.len() > 0 && match self.parts[0].deref() {
-            StringOrConstraintTree::String(s) => *s == ",",
-            _ => false
-        }
-    }
+#[derive(PartialEq, Clone)]
+pub enum Combinator {
+    Or,
+    And,
+    None
+}
 
+impl ConstraintTree {
     fn combine(&self, inand:bool, nested: bool) -> String {
         let mut res: String;
         match self.parts.len() {
@@ -91,14 +93,16 @@ impl ConstraintTree {
             _ => {
                 let mut str_parts = vec![];
 
-                for item in &self.parts[1..] {
+                for item in &self.parts {
                     str_parts.push(match item.deref() {
                         StringOrConstraintTree::String(s) => s.deref().to_string(),
-                        StringOrConstraintTree::ConstraintTree(cj) => cj.combine(self.isand(), true)
+                        StringOrConstraintTree::ConstraintTree(cj) => {
+                            cj.combine(self.combinator == Combinator::And, true)
+                        }
                     });
                 }
 
-                if self.isand() {
+                if self.combinator == Combinator::And {
                     res = str_parts.join(",");
                 } else {
                     res = str_parts.join("|");
@@ -148,7 +152,9 @@ impl PartialEq for ConstraintTree {
 
 impl From<&str> for ConstraintTree {
     fn from (s: &str) -> ConstraintTree {
-        ConstraintTree { parts: vec![Box::new(StringOrConstraintTree::String(s.to_string()))]}
+        ConstraintTree {
+            combinator: Combinator::None,
+            parts: vec![Box::new(StringOrConstraintTree::String(s.to_string()))]}
     }
 }
 
@@ -156,7 +162,7 @@ impl From<StringOrConstraintTree> for ConstraintTree {
     fn from (scj: StringOrConstraintTree) -> ConstraintTree {
         match scj {
             StringOrConstraintTree::ConstraintTree(_scj) => _scj,
-            _ => ConstraintTree { parts: vec![Box::new(scj)] },
+            _ => ConstraintTree { combinator: Combinator::None, parts: vec![Box::new(scj)] },
         }
     }
 }
@@ -165,15 +171,13 @@ impl From<Vec<&str>> for ConstraintTree
 {
     fn from(s: Vec<&str>) -> ConstraintTree {
         ConstraintTree {
-            parts: s.iter().map(|x| Box::new(StringOrConstraintTree::String(x.to_string()))).collect()
+            combinator: match s[0]{
+                "," => Combinator::And,
+                "|" => Combinator::Or,
+                _ => panic!("Unknown first value in vec of str used as ConstraintTree")
+            },
+            parts: s[1..].iter().map(|x| Box::new(StringOrConstraintTree::String(x.to_string()))).collect()
         }
-    }
-}
-
-impl From<Vec<Box<StringOrConstraintTree>>> for ConstraintTree
-{
-    fn from (parts: Vec<Box<StringOrConstraintTree>>) -> ConstraintTree {
-        ConstraintTree { parts }
     }
 }
 
@@ -200,9 +204,11 @@ impl fmt::Debug for ConstraintTree {
 /// assert_eq!(v, "1.2.3");
 /// let v = untreeify(vec![",", "1.2.3", ">4.5.6"].into());
 /// assert_eq!(v, "1.2.3,>4.5.6");
-/// let tree: ConstraintTree = ConstraintTree {parts: vec![Box::new(StringOrConstraintTree::String("|".to_string())),
-///                                                          Box::new(StringOrConstraintTree::ConstraintTree(cj123_456)),
-///                                                          Box::new(StringOrConstraintTree::String("<=7.8.9".to_string()))]};
+/// let tree: ConstraintTree = ConstraintTree {
+///                               combinator: Combinator::Or,
+///                               parts: vec![
+///                                     Box::new(StringOrConstraintTree::ConstraintTree(cj123_456)),
+///                                     Box::new(StringOrConstraintTree::String("<=7.8.9".to_string()))]};
 /// let v = untreeify(tree);
 /// assert_eq!(v, "(1.2.3,4.5.6)|<=7.8.9");
 /// ```
@@ -210,57 +216,65 @@ pub fn untreeify(spec: ConstraintTree) -> String {
     spec.combine(false, false)
 }
 
+impl From<&str> for Combinator {
+    fn from(input: &str) -> Combinator {
+        match input {
+            "," => Combinator::And,
+            "|" => Combinator::Or,
+            _ => Combinator::None
+        }
+    }
+}
+
 fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) {
     // cstop: operators with lower precedence
     while stack.len() > 0 && ! cstop.contains(stack.last().unwrap()) {
-        let c = stack.pop().unwrap();
         // Fuse expressions with the same operator; e.g.,
         //   ('|', ('|', a, b), ('|', c, d))becomes
         //   ('|', a, b, c d)
-        // We're playing a bit of a trick here. Instead of checking
-        // if the left or right entries are tuples, we're counting
-        // on the fact that if we _do_ see a string instead, its
-        // first character cannot possibly be equal to the operator.
-        let mut condensed_parts: Vec<Box<StringOrConstraintTree>> = vec![];
-        for part in &output.parts {
-            match part.deref() {
+        if output.parts.len() < 2 {
+            panic!("can't join single expression")
+        }
+        let c: Combinator = stack.pop().unwrap().into();
+        let mut condensed: Vec<Box<StringOrConstraintTree>> = vec![];
+
+        for _ in 0..2 {
+            match output.parts.pop().unwrap().deref() {
                 StringOrConstraintTree::ConstraintTree(a) => {
-                    if let StringOrConstraintTree::String(inner_a) = &a.parts[0].deref() {
-                        if inner_a == c {
-                            // first character in ConstraintTree matches our stack character - can condense
-                            condensed_parts.extend_from_slice(&a.parts[1..]);
-                        } else {
-                            // no match, need to push whole ConstraintTree onto parts vector
-                            condensed_parts.push(part.clone());
-                        }
+                    if a.combinator == c {
+                        condensed.append(&mut a.parts.to_vec())
                     } else {
-                        // first item in ConstraintTree wasn't a string at all (it's another ConstraintTree)
-                        //    Can't condense.  push it onto the vector.
-                        condensed_parts.push(part.clone());
+                        condensed.push(Box::new(StringOrConstraintTree::ConstraintTree(a.clone())))
                     }
                 },
-                // it's a string, so we need to just push it
-                _ => condensed_parts.push(part.clone()),
-            };
-        };
+                StringOrConstraintTree::String(a) => condensed.push(
+                    Box::new(StringOrConstraintTree::String(a.to_string())))
+            }
+        }
 
-        condensed_parts.insert(0, Box::new(StringOrConstraintTree::String(c.to_string())));
-        *output = ConstraintTree { parts: condensed_parts };
+        let ct = ConstraintTree {
+            combinator: c,
+            parts: condensed
+        };
     }
 }
 
 /// Examples:
 /// ```
 /// use ronda::{treeify, ConstraintTree, StringOrConstraintTree};
+/// use super::*;
 ///
 ///  let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1");
-///  assert_eq!(v, ConstraintTree { parts: vec![
-///      Box::new(StringOrConstraintTree::String("|".to_string())),
+///  assert_eq!(v, ConstraintTree {
+///                  combinator: Combinator::Or,
+///                  parts: vec![
 ///      Box::new(StringOrConstraintTree::String("1.5".to_string())),
-///      Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {parts: vec![
-///           Box::new(StringOrConstraintTree::String(",".to_string())),
-///           Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {parts: vec![
-///               Box::new(StringOrConstraintTree::String("|".to_string())),
+///      Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+///                   combinator: Combinator::And,
+///                   parts: vec![
+///           Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+///                       combinator: Combinator::Or,
+///                       parts: vec![
 ///               Box::new(StringOrConstraintTree::String("1.6".to_string())),
 ///               Box::new(StringOrConstraintTree::String("1.7".to_string())),
 ///           ]})),
@@ -276,7 +290,7 @@ pub fn treeify(spec_str: &str) -> ConstraintTree {
         r#"\s*\^[^$]*[$]|\s*[()|,]|\s*[^()|,]+"#
     ).unwrap(); }
     let DELIMITERS: &str = "|,()";
-    let mut output: ConstraintTree = ConstraintTree { parts: vec![]};
+    let mut output: ConstraintTree = ConstraintTree { combinator: Combinator::None, parts: vec![]};
     let mut stack: Vec<&str> =vec![];
 
     let spec_str_in_parens = format!("({})", spec_str);
@@ -284,9 +298,15 @@ pub fn treeify(spec_str: &str) -> ConstraintTree {
 
     for item in tokens {
         match item {
-            "|" => { _apply_ops("(", &mut output, &mut stack); stack.push("|"); },
-            "," => { _apply_ops("|(", &mut output, &mut stack); stack.push(","); },
             "(" => { stack.push("(") },
+            "|" => {
+                _apply_ops("(", &mut output, &mut stack);
+                stack.push("|");
+            },
+            "," => {
+                _apply_ops("|(", &mut output, &mut stack);
+                stack.push(",");
+            },
             ")" => {
                 _apply_ops("(", &mut output, &mut stack);
                 if stack.is_empty() || *stack.last().unwrap() != "(" {
@@ -295,36 +315,12 @@ pub fn treeify(spec_str: &str) -> ConstraintTree {
                 stack.pop();
             },
             _ => {
-                let mut nest = false;
-                if output.parts.len() > 0 {
-                    match output.parts[0].deref() {
-                        StringOrConstraintTree::ConstraintTree(a) => {
-                            if let StringOrConstraintTree::String(inner_a) = &a.parts[0].deref() {
-                                if DELIMITERS.contains(inner_a) && inner_a != stack.last().unwrap() {
-                                    // nest the existing output
-                                    output = ConstraintTree { parts: vec![Box::new(StringOrConstraintTree::ConstraintTree(output))] };
-                                    nest = true;
-                                }
-                            }
-                        }
-                        StringOrConstraintTree::String(a) => {
-                            if DELIMITERS.contains(a) && a != stack.last().unwrap() {
-                                // nest the existing output
-                                output = ConstraintTree { parts: vec![Box::new(StringOrConstraintTree::ConstraintTree(output))] };
-                                nest = true;
-                            }
-                        }
-                    }
-                }
-                output.parts.push(Box::new(StringOrConstraintTree::String(item.to_string())));
-                if nest {
-                    output.parts.insert(0, Box::new(StringOrConstraintTree::String(stack.pop().unwrap().to_string())));
-                }
+                output.parts.push(Box::new(StringOrConstraintTree::String(item.to_string())))
             }
         }
     }
 
-    // if ! stack.is_empty() { panic!(format!("unable to convert ({}) to expression tree: {:#?}", spec_str, stack)); }
+    if ! stack.is_empty() { panic!(format!("unable to convert ({}) to expression tree: {:#?}", spec_str, stack)); }
     output
 }
 
@@ -362,30 +358,34 @@ mod tests {
     #[test]
     fn untreeify_and_joining_inner_or() {
         let inner_or: ConstraintTree = vec!["|", "1.2.3", "4.5.6"].into();
-        let v = untreeify(vec![
-            Box::new(StringOrConstraintTree::String(",".to_string())),
-            Box::new(StringOrConstraintTree::ConstraintTree(inner_or)),
-            Box::new(StringOrConstraintTree::String("<=7.8.9".to_string())),
-        ].into());
+        let v = untreeify(ConstraintTree {
+            combinator: Combinator::And,
+            parts: vec![
+                Box::new(StringOrConstraintTree::ConstraintTree(inner_or)),
+                Box::new(StringOrConstraintTree::String("<=7.8.9".to_string())),
+            ]
+        });
         assert_eq!(v, "(1.2.3|4.5.6),<=7.8.9");
     }
 
     #[test]
     fn untreeify_nested() {
         let or_6_7: ConstraintTree = vec!["|", "1.6", "1.7"].into();
-        let or_6_7_and_8_9: ConstraintTree = vec![
-            Box::new(StringOrConstraintTree::String(",".to_string())),
+        let or_6_7_and_8_9: ConstraintTree = ConstraintTree{
+            combinator: Combinator::And,
+            parts: vec![
             Box::new(StringOrConstraintTree::ConstraintTree(or_6_7)),
             Box::new(StringOrConstraintTree::String("1.8".to_string())),
             Box::new(StringOrConstraintTree::String("1.9".to_string())),
-        ].into();
-        let or_with_inner_group: ConstraintTree = vec![
-            Box::new(StringOrConstraintTree::String("|".to_string())),
-            Box::new(StringOrConstraintTree::String("1.5".to_string())),
-            Box::new(StringOrConstraintTree::ConstraintTree(or_6_7_and_8_9)),
-            Box::new(StringOrConstraintTree::String("2.0".to_string())),
-            Box::new(StringOrConstraintTree::String("2.1".to_string())),
-        ].into();
+            ]};
+        let or_with_inner_group: ConstraintTree = ConstraintTree {
+            combinator: Combinator::Or,
+            parts: vec![
+                Box::new(StringOrConstraintTree::String("1.5".to_string())),
+                Box::new(StringOrConstraintTree::ConstraintTree(or_6_7_and_8_9)),
+                Box::new(StringOrConstraintTree::String("2.0".to_string())),
+                Box::new(StringOrConstraintTree::String("2.1".to_string())),
+                ]};
         let v = untreeify(or_with_inner_group);
         assert_eq!(v, "1.5|((1.6|1.7),1.8,1.9)|2.0|2.1");
     }
@@ -394,6 +394,7 @@ mod tests {
     fn treeify_single() {
         let v = treeify("1.2.3");
         assert_eq!(v, ConstraintTree {
+            combinator: Combinator::None,
             parts: vec![
                 Box::new(StringOrConstraintTree::String("1.2.3".to_string()))]
         });
@@ -403,8 +404,8 @@ mod tests {
     fn treeify_simple_and() {
         let v = treeify("1.2.3,>4.5.6");
         assert_eq!(v, ConstraintTree {
+            combinator: Combinator::And,
             parts: vec![
-                Box::new(StringOrConstraintTree::String(",".to_string())),
                 Box::new(StringOrConstraintTree::String("1.2.3".to_string())),
                 Box::new(StringOrConstraintTree::String(">4.5.6".to_string())),
             ]
@@ -415,11 +416,11 @@ mod tests {
     fn treeify_and_or_grouping() {
         let v = treeify("1.2.3,4.5.6|<=7.8.9");
         assert_eq!(v, ConstraintTree {
+            combinator: Combinator::Or,
             parts: vec![
-                Box::new(StringOrConstraintTree::String("|".to_string())),
                 Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                    combinator: Combinator::And,
                     parts: vec![
-                        Box::new(StringOrConstraintTree::String(",".to_string())),
                         Box::new(StringOrConstraintTree::String("1.2.3".to_string())),
                         Box::new(StringOrConstraintTree::String("4.5.6".to_string())),
                     ]
@@ -433,11 +434,11 @@ mod tests {
     fn treeify_and_with_or_in_parens() {
         let v = treeify("(1.2.3|4.5.6),<=7.8.9");
         assert_eq!(v, ConstraintTree {
+            combinator: Combinator::And,
             parts: vec![
-                Box::new(StringOrConstraintTree::String(",".to_string())),
                 Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                    combinator: Combinator::Or,
                     parts: vec![
-                        Box::new(StringOrConstraintTree::String("|".to_string())),
                         Box::new(StringOrConstraintTree::String("1.2.3".to_string())),
                         Box::new(StringOrConstraintTree::String("4.5.6".to_string())),
                     ]
@@ -452,15 +453,15 @@ mod tests {
         let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1");
 
         assert_eq!(v, ConstraintTree {
+            combinator: Combinator::Or,
             parts: vec![
-                Box::new(StringOrConstraintTree::String("|".to_string())),
                 Box::new(StringOrConstraintTree::String("1.5".to_string())),
                 Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                    combinator: Combinator::And,
                     parts: vec![
-                        Box::new(StringOrConstraintTree::String(",".to_string())),
                         Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                            combinator: Combinator::Or,
                             parts: vec![
-                                Box::new(StringOrConstraintTree::String("|".to_string())),
                                 Box::new(StringOrConstraintTree::String("1.6".to_string())),
                                 Box::new(StringOrConstraintTree::String("1.7".to_string())),
                             ]})),
@@ -476,15 +477,15 @@ mod tests {
     fn treeify_nest_or_in_parens_2() {
         let v = treeify("1.5|(1.6|1.7),1.8,1.9|2.0|2.1");
         assert_eq!(v, ConstraintTree {
+            combinator: Combinator::Or,
             parts: vec![
-                Box::new(StringOrConstraintTree::String("|".to_string())),
                 Box::new(StringOrConstraintTree::String("1.5".to_string())),
                 Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                    combinator: Combinator::And,
                     parts: vec![
-                        Box::new(StringOrConstraintTree::String(",".to_string())),
                         Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                            combinator: Combinator::Or,
                             parts: vec![
-                                Box::new(StringOrConstraintTree::String("|".to_string())),
                                 Box::new(StringOrConstraintTree::String("1.6".to_string())),
                                 Box::new(StringOrConstraintTree::String("1.7".to_string())),
                             ]})),
