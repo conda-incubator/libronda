@@ -10,6 +10,7 @@ pub mod errors;
 pub mod version;
 pub mod version_part;
 pub mod matching;
+pub mod spec_trees;
 
 pub use self::comp_op::CompOp;
 pub use self::version::Version;
