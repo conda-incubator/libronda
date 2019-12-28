@@ -83,8 +83,9 @@ impl From<ConstraintTree> for VersionSpec {
     }
 }
 
-fn create_version_spec_from_operator_str(input: &str) -> VersionSpec {
-    m = version_relation_re.match(vspec_str)
+fn create_version_spec_from_operator_str(input: &str) -> Result<VersionSpec, > {
+    lazy_static! { static ref VERSION_RELATION_RE: Regex = Regex::new( r#"^(=|==|!=|<=|>=|<|>|~=)(?![=<>!~])(\S+)$"# ).unwrap(); }
+    let m = VERSION_RELATION_RE.match(input);
     if m is None:
         raise InvalidVersionSpec(vspec_str, "invalid operator")
     operator_str, vo_str = m.groups()
