@@ -184,9 +184,9 @@ impl From<Vec<&str>> for ConstraintTree
 impl fmt::Debug for ConstraintTree {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
-            write!(f, "{:#?}", self.parts)
+            write!(f, "{:#?}{:#?}", self.combinator, self.parts)
         } else {
-            write!(f, "{:?}", self.parts)
+            write!(f, "{:?}{:?}", self.combinator, self.parts)
         }
     }
 }
@@ -197,7 +197,7 @@ impl fmt::Debug for ConstraintTree {
 /// # Examples
 ///
 /// ```
-/// use ronda::{untreeify, ConstraintTree, StringOrConstraintTree};
+/// use ronda::{untreeify, ConstraintTree, StringOrConstraintTree, Combinator};
 ///
 /// let cj123_456: ConstraintTree = vec![",", "1.2.3", "4.5.6"].into();
 /// let v = untreeify("1.2.3".into());
@@ -226,6 +226,16 @@ impl From<&str> for Combinator {
     }
 }
 
+impl fmt::Debug for Combinator {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Combinator::And => write!(f, "&"),
+            Combinator::Or => write!(f, "|"),
+            Combinator::None => write!(f, ""),
+        }
+    }
+}
+
 fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) {
     // cstop: operators with lower precedence
     while stack.len() > 0 && ! cstop.contains(stack.last().unwrap()) {
@@ -242,27 +252,32 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) {
             match output.parts.pop().unwrap().deref() {
                 StringOrConstraintTree::ConstraintTree(a) => {
                     if a.combinator == c {
-                        condensed.append(&mut a.parts.to_vec())
+                        condensed = a.clone().parts.into_iter().chain(condensed.into_iter()).collect();
                     } else {
-                        condensed.push(Box::new(StringOrConstraintTree::ConstraintTree(a.clone())))
+                        condensed.insert(0,(Box::new(StringOrConstraintTree::ConstraintTree(a.clone()))))
                     }
                 },
-                StringOrConstraintTree::String(a) => condensed.push(
+                StringOrConstraintTree::String(a) => condensed.insert(0,
                     Box::new(StringOrConstraintTree::String(a.to_string())))
             }
         }
 
-        let ct = ConstraintTree {
+        let condensed_output = ConstraintTree {
             combinator: c,
             parts: condensed
         };
+
+        if output.parts.len() > 0 {
+            output.parts.push(Box::new(StringOrConstraintTree::ConstraintTree(condensed_output)));
+        } else {
+            *output = condensed_output;
+        }
     }
 }
 
 /// Examples:
 /// ```
-/// use ronda::{treeify, ConstraintTree, StringOrConstraintTree};
-/// use super::*;
+/// use ronda::{treeify, ConstraintTree, StringOrConstraintTree, Combinator};
 ///
 ///  let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1");
 ///  assert_eq!(v, ConstraintTree {
@@ -289,7 +304,7 @@ pub fn treeify(spec_str: &str) -> ConstraintTree {
     lazy_static! { static ref VSPEC_TOKENS: Regex = Regex::new(
         r#"\s*\^[^$]*[$]|\s*[()|,]|\s*[^()|,]+"#
     ).unwrap(); }
-    let DELIMITERS: &str = "|,()";
+    let delimiters: &str = "|,()";
     let mut output: ConstraintTree = ConstraintTree { combinator: Combinator::None, parts: vec![]};
     let mut stack: Vec<&str> =vec![];
 
@@ -315,6 +330,11 @@ pub fn treeify(spec_str: &str) -> ConstraintTree {
                 stack.pop();
             },
             _ => {
+                if output.combinator != Combinator::None {
+                    output = ConstraintTree {
+                        combinator: Combinator::None,
+                        parts: vec![Box::new(StringOrConstraintTree::ConstraintTree(output))]};
+                }
                 output.parts.push(Box::new(StringOrConstraintTree::String(item.to_string())))
             }
         }
