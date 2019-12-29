@@ -1,7 +1,10 @@
 use super::spec_trees::*;
 use regex::Regex;
 use std::collections::HashSet;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
+use crate::version::matching::Operator::Ne;
+use core::panicking::panic_fmt;
+use crate::{Version, CompOp};
 
 pub trait Spec {
     // properties in Python
@@ -86,34 +89,24 @@ impl From<ConstraintTree> for VersionSpec {
     }
 }
 
-fn create_version_spec_from_operator_str(input: &str) -> VersionSpec {
+fn create_version_spec_from_operator_str(input: &str) -> Result<VersionSpec, &'static str> {
     lazy_static! { static ref VERSION_RELATION_RE: Regex = Regex::new( r#"^(=|==|!=|<=|>=|<|>|~=)(?![=<>!~])(\S+)$"# ).unwrap(); }
-    let m = VERSION_RELATION_RE.match(input);
-    if m is None:
-        raise InvalidVersionSpec(vspec_str, "invalid operator")
-    operator_str, vo_str = m.groups()
-    if vo_str[-2:] == '.*':
-    if operator_str in ("=", ">="):
-        vo_str = vo_str[:-2]
-    elif operator_str == "!=":
-        vo_str = vo_str[:-2]
-    operator_str = "!=startswith"
-    elif operator_str == "~=":
-        raise InvalidVersionSpec(vspec_str, "invalid operator with '.*'")
-    else:
-    log.warning("Using .* with relational operator is superfluous and deprecated "
-    "and will be removed in a future version of conda. Your spec was "
-    "{}, but conda is ignoring the .* and treating it as {}"
-        .format(vo_str, vo_str[:-2]))
-    vo_str = vo_str[:-2]
-    try:
-        self.operator_func = OPERATOR_MAP[operator_str]
-    except KeyError:
-        raise InvalidVersionSpec(vspec_str, "invalid operator: %s" % operator_str)
-    self.matcher_vo = VersionOrder(vo_str)
-    matcher = self.operator_match
-    is_exact = operator_str == "=="
-    VersionSpec {}
+
+    let (operator_str: &str, v_str: &str) = match VERSION_RELATION_RE.captures(input) {
+        None => return Err(&format!("invalid operator in string {}", input)),
+        Some(caps) => (caps.get(1).as_str(), caps.get(2).as_str())
+    };
+
+    if v_str.endswith(".*") {
+        if operator_str == "!=" {
+            let operator_str = "!=startswith";
+        } else if operator_str == "~=" {
+            return Err(&format!("invalid operator (~=) with '.*' in spec string: {}", input));
+        }
+        let v_str = v_str[..-2];
+    }
+    let matcher = Box::New(|x: &str| operator_match(spec: x, operator: operator_str.into(), version: v_str.into()));
+    Ok(VersionSpec {spec_str: input.to_string(), tree: None, matcher, _is_exact: operator_str == "=="})
 }
 
 fn match_any<T: Spec>(spec: &T, spec_str: &str) -> bool {
@@ -128,7 +121,25 @@ fn regex_match<T: Spec>(spec: &T, spec_str: &str, pattern: Regex) -> bool {
     panic!("Not implemented")
 }
 
-fn operator_match<T: Spec>(spec: &T, spec_str: &str) -> bool {
+impl From<&str> for Operator {
+    fn from(s: &str) -> Operator {
+        match s {
+            "==" => CompOp::Eq,
+            "!=" => CompOp::Ne,
+            "<=" => CompOp::Le,
+            ">=" => CompOp::Ge,
+            "<" => CompOp:Lt,
+            ">" => CompOp:Gt,
+            "=" => CompOp:Startswith,
+            "!=startswith" => CompOp::NotStartswith,
+            "~=" => CompOp::Compatible,
+            _ => panic_fmt!("unrecognized operator string: {}", s)
+        }
+    }
+}
+
+// the operator and version are what is stored relative to the Spec, so the Spec doesn't need to be an extra arg here.
+fn operator_match(spec_str: &str, operator: CompOp, version: &Version) -> bool {
     panic!("Not implemented")
 }
 

@@ -34,6 +34,22 @@ pub enum CompOp {
     /// Greater than (`>`).
     /// When version `A` is greater than `B` but not equal.
     Gt,
+
+    /// StartsWith (`=`).
+    /// When version `B` completely matches the first part of `A`
+    StartsWith,
+
+    /// NotStartsWith (`!=startswith`).
+    /// When the version `B` does not completely match the first part of `A`
+    NotStartsWith,
+
+    /// Compatible (`~=`).
+    /// PEP 440 compatible release, https://www.python.org/dev/peps/pep-0440/#compatible-release
+    /// For V.N,
+    /// >=V.N, == V.*
+    /// Generally interpreted in Conda as
+    /// >=V.N, <{V+1}
+    Compatible,
 }
 
 impl CompOp {
@@ -43,12 +59,15 @@ impl CompOp {
     ///
     /// The following signs are supported:
     ///
-    /// * `==` _or_ `=` -> `Eq`
-    /// * `!=` _or_ `!` _or_ `<>` -> `Ne`
+    /// * `==` -> `Eq`
+    /// * `!=` -> `Ne`
     /// * `< ` -> `Lt`
     /// * `<=` -> `Le`
     /// * `>=` -> `Ge`
-    /// * `> ` -> `Gt`
+    /// * `>` -> `Gt`
+    /// * `=` -> `StartsWith`
+    /// * `!=startswith ` -> `NotStartsWith`
+    /// * `~=` -> `Compatible`
     ///
     /// # Examples
     ///
@@ -62,12 +81,15 @@ impl CompOp {
     /// ```
     pub fn from_sign(sign: &str) -> Result<CompOp, ()> {
         match sign.trim().as_ref() {
-            "==" | "=" => Ok(CompOp::Eq),
-            "!=" | "!" | "<>" => Ok(CompOp::Ne),
+            "==" => Ok(CompOp::Eq),
+            "!=" => Ok(CompOp::Ne),
             "<" => Ok(CompOp::Lt),
             "<=" => Ok(CompOp::Le),
             ">=" => Ok(CompOp::Ge),
             ">" => Ok(CompOp::Gt),
+            "=" => CompOp:StartsWith,
+            "!=startswith" => CompOp::NotStartsWith,
+            "~=" => CompOp::Compatible,
             _ => Err(()),
         }
     }
@@ -94,6 +116,9 @@ impl CompOp {
             "le" => Ok(CompOp::Le),
             "ge" => Ok(CompOp::Ge),
             "gt" => Ok(CompOp::Gt),
+            "startswith" => Ok(CompOp::StartsWith),
+            "notstartswith" => Ok(CompOp::NotStartsWith),
+            "compatible" => Ok(CompOp::Compatible),
             _ => Err(()),
         }
     }
@@ -132,6 +157,9 @@ impl CompOp {
             &CompOp::Le => "le",
             &CompOp::Ge => "ge",
             &CompOp::Gt => "gt",
+            &CompOp::StartsWith => "startswith",
+            &CompOp::NotStartsWith => "notstartswith",
+            &CompOp::Compatible => "compatible",
         }
     }
 
@@ -181,6 +209,8 @@ impl CompOp {
             &CompOp::Le => CompOp::Gt,
             &CompOp::Ge => CompOp::Lt,
             &CompOp::Gt => CompOp::Le,
+            &CompOp::StartsWith => CompOp::NotStartsWith,
+            &CompOp::NotStartsWith => CompOp::StartsWith,
         }
     }
 
@@ -230,6 +260,8 @@ impl CompOp {
             &CompOp::Le => CompOp::Ge,
             &CompOp::Ge => CompOp::Le,
             &CompOp::Gt => CompOp::Lt,
+            &CompOp::StartsWith => CompOp::NotStartsWith,
+            &CompOp::NotStartsWith => CompOp::StartsWith,
         }
     }
 
