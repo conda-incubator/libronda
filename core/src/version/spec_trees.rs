@@ -1,6 +1,7 @@
 use std::ops::Deref;
 use std::fmt;
 use regex::Regex;
+use serde::export::TryFrom;
 
 #[derive(Clone)]
 pub enum StringOrConstraintTree {
@@ -22,14 +23,14 @@ pub enum Combinator {
 }
 
 impl ConstraintTree {
-    fn combine(&self, inand:bool, nested: bool) -> String {
-        let mut res: String;
+    fn combine(&self, inand:bool, nested: bool) -> Result<String, &'static str> {
+        let mut res: String = "".to_string();
         match self.parts.len() {
             1 => {
                 res = if let StringOrConstraintTree::String(s) = self.parts[0].deref() {
-                    s.to_string() } else { panic!() };
+                    s.to_string() } else { Err("Can't combine (stringify) single-element ConstraintTree that isn't just a string") };
             },
-            0 => panic!(),
+            0 => Err("Can't combine (stringify) a zero-element ConstraintTree"),
             _ => {
                 let mut str_parts = vec![];
 
@@ -52,7 +53,7 @@ impl ConstraintTree {
                 }
             }
         }
-        res
+        Ok(res)
     }
 }
 
@@ -107,17 +108,19 @@ impl From<StringOrConstraintTree> for ConstraintTree {
     }
 }
 
-impl From<Vec<&str>> for ConstraintTree
+impl TryFrom<Vec<&str>> for ConstraintTree
 {
-    fn from(s: Vec<&str>) -> ConstraintTree {
-        ConstraintTree {
-            combinator: match s[0]{
-                "," => Combinator::And,
-                "|" => Combinator::Or,
-                _ => panic!("Unknown first value in vec of str used as ConstraintTree")
-            },
+    type Error = &'static str;
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        let combinator = match s[0]{
+            "," => Combinator::And,
+            "|" => Combinator::Or,
+            _ => return Err("Unknown first value in vec of str used as ConstraintTree")
+        };
+        Ok(ConstraintTree {
+            combinator,
             parts: s[1..].iter().map(|x| Box::new(StringOrConstraintTree::String(x.to_string()))).collect()
-        }
+        })
     }
 }
 
@@ -176,14 +179,14 @@ impl fmt::Debug for Combinator {
     }
 }
 
-fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) {
+fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -> Result<(), &'static str> {
     // cstop: operators with lower precedence
     while stack.len() > 0 && ! cstop.contains(stack.last().unwrap()) {
         // Fuse expressions with the same operator; e.g.,
         //   ('|', ('|', a, b), ('|', c, d))becomes
         //   ('|', a, b, c d)
         if output.parts.len() < 2 {
-            panic!("can't join single expression")
+            return Err("can't join single expression")
         }
         let c: Combinator = stack.pop().unwrap().into();
         let mut condensed: Vec<Box<StringOrConstraintTree>> = vec![];
@@ -213,6 +216,7 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) {
             *output = condensed_output;
         }
     }
+    return Ok(())
 }
 
 /// Examples:
@@ -240,7 +244,7 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) {
 ///      Box::new(StringOrConstraintTree::String("2.1".to_string())),
 ///  ]});
 ///  ```
-pub fn treeify(spec_str: &str) -> ConstraintTree {
+pub fn treeify(spec_str: &str) -> Result<ConstraintTree, &'static str> {
     lazy_static! { static ref VSPEC_TOKENS: Regex = Regex::new(
         r#"\s*\^[^$]*[$]|\s*[()|,]|\s*[^()|,]+"#
     ).unwrap(); }
@@ -255,17 +259,17 @@ pub fn treeify(spec_str: &str) -> ConstraintTree {
         match item {
             "(" => { stack.push("(") },
             "|" => {
-                _apply_ops("(", &mut output, &mut stack);
+                _apply_ops("(", &mut output, &mut stack)?;
                 stack.push("|");
             },
             "," => {
-                _apply_ops("|(", &mut output, &mut stack);
+                _apply_ops("|(", &mut output, &mut stack)?;
                 stack.push(",");
             },
             ")" => {
-                _apply_ops("(", &mut output, &mut stack);
+                _apply_ops("(", &mut output, &mut stack)?;
                 if stack.is_empty() || *stack.last().unwrap() != "(" {
-                    panic!("expression must start with \"(\"");
+                    return Err("expression must start with \"(\"");
                 }
                 stack.pop();
             },
@@ -280,8 +284,8 @@ pub fn treeify(spec_str: &str) -> ConstraintTree {
         }
     }
 
-    if ! stack.is_empty() { panic!(format!("unable to convert ({}) to expression tree: {:#?}", spec_str, stack)); }
-    output
+    if ! stack.is_empty() { return Err(&format!("unable to convert ({}) to expression tree: {:#?}", spec_str, stack)); }
+    Ok(output)
 }
 
 

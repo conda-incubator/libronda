@@ -1,6 +1,7 @@
 use super::spec_trees::*;
 use regex::Regex;
 use std::collections::HashSet;
+use std::convert::TryFrom;
 
 pub trait Spec {
     // properties in Python
@@ -26,14 +27,16 @@ struct VersionSpec {
 
 impl Spec for VersionSpec {
     fn spec(&self) -> &str { &self.spec_str }
-    fn merge(&self, other: &Self) -> Self { panic!() }
+    fn merge(&self, other: &Self) -> Self { panic!("Not implemented") }
     fn is_exact(&self) -> bool { self._is_exact }
 }
 
 impl VersionSpec {}
 
-impl From<&str> for VersionSpec {
-    fn from(input: &str) -> VersionSpec {
+impl TryFrom<&str> for VersionSpec {
+    type Error = &'static str;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
         lazy_static! { static ref REGEX_SPLIT_RE: Regex = Regex::new( r#".*[()|,^$]"# ).unwrap(); }
         lazy_static! { static ref OPERATOR_START: HashSet<&'static str> = ["=", "<", ">", "!", "~"].iter().cloned().collect(); }
         if REGEX_SPLIT_RE.split(input).collect().len() > 0 {
@@ -83,7 +86,7 @@ impl From<ConstraintTree> for VersionSpec {
     }
 }
 
-fn create_version_spec_from_operator_str(input: &str) -> Result<VersionSpec, > {
+fn create_version_spec_from_operator_str(input: &str) -> VersionSpec {
     lazy_static! { static ref VERSION_RELATION_RE: Regex = Regex::new( r#"^(=|==|!=|<=|>=|<|>|~=)(?![=<>!~])(\S+)$"# ).unwrap(); }
     let m = VERSION_RELATION_RE.match(input);
     if m is None:
@@ -122,11 +125,11 @@ fn match_all<T: Spec>(spec: &T, spec_str: &str) -> bool {
 }
 
 fn regex_match<T: Spec>(spec: &T, spec_str: &str, pattern: Regex) -> bool {
-    panic!()
+    panic!("Not implemented")
 }
 
 fn operator_match<T: Spec>(spec: &T, spec_str: &str) -> bool {
-    panic!()
+    panic!("Not implemented")
 }
 
 fn always_true_match<T: Spec>(_spec: &T, _spec_str: &str) -> bool {

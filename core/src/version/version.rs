@@ -281,20 +281,20 @@ impl Version {
                     Some(Ordering::Less) => return CompOp::Lt,
                     Some(Ordering::Greater) => return CompOp::Gt,
                     Some(Ordering::Equal) => return CompOp::Eq,
-                    _ => panic!()
+                    _ => panic!("Ignoring ge, le, ne")
                 },
                 (None, Some(j)) => match &j.get_empty().partial_cmp(j) {
                     Some(Ordering::Less) => return CompOp::Lt,
                     Some(Ordering::Greater) => return CompOp::Gt,
                     Some(Ordering::Equal) => return CompOp::Eq,
-                    _ => panic!()
+                    _ => panic!("Ignoring ge, le, ne")
                 },
                 (Some(i), Some(j)) => match i.partial_cmp(j) {
                     Some(Ordering::Greater) => return CompOp::Gt,
                     Some(Ordering::Less) => return CompOp::Lt,
                     // This is the only loop branch that continues
                     Some(Ordering::Equal) => Ordering::Equal,
-                    _ => panic!()
+                    _ => panic!("Ignoring ge, le, ne")
                 },
                 // both versions are the same length and are equal for all values
                 (None, None) => return CompOp::Eq

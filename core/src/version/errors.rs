@@ -21,8 +21,6 @@ pub enum VersionParsingError {
     UnknownParseError,
 }
 
-
-
 impl de::Error for VersionParsingError {
     fn custom<T: Display>(msg: T) -> Self {
         VersionParsingError::Message(msg.to_string())
