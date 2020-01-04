@@ -8,14 +8,12 @@
 //#![feature(async_await)]
 
 #[macro_use] extern crate lazy_static;
-#[macro_use] extern crate cpython;
 #[cfg(test)]
 #[macro_use] extern crate rstest;
 
 mod version;
 mod repodata;
 // mod graph;
-mod python_interface;
 // mod resolve;
 
 // Reexports

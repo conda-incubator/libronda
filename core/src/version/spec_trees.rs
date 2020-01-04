@@ -2,6 +2,7 @@ use std::ops::Deref;
 use std::fmt;
 use regex::Regex;
 use serde::export::TryFrom;
+use std::convert::TryInto;
 
 #[derive(Clone)]
 pub enum StringOrConstraintTree {
@@ -38,7 +39,7 @@ impl ConstraintTree {
                     str_parts.push(match item.deref() {
                         StringOrConstraintTree::String(s) => s.deref().to_string(),
                         StringOrConstraintTree::ConstraintTree(cj) => {
-                            cj.combine(self.combinator == Combinator::And, true)
+                            cj.combine(self.combinator == Combinator::And, true)?
                         }
                     });
                 }
@@ -141,11 +142,12 @@ impl fmt::Debug for ConstraintTree {
 ///
 /// ```
 /// use ronda::{untreeify, ConstraintTree, StringOrConstraintTree, Combinator};
+/// use std::convert::TryInto;
 ///
-/// let cj123_456: ConstraintTree = vec![",", "1.2.3", "4.5.6"].into();
-/// let v = untreeify("1.2.3".into());
+/// let cj123_456: ConstraintTree = vec![",", "1.2.3", "4.5.6"].try_into().unwrap();
+/// let v = untreeify("1.2.3".try_into().unwrap());
 /// assert_eq!(v, "1.2.3");
-/// let v = untreeify(vec![",", "1.2.3", ">4.5.6"].into());
+/// let v = untreeify(vec![",", "1.2.3", ">4.5.6"].try_into().unwrap());
 /// assert_eq!(v, "1.2.3,>4.5.6");
 /// let tree: ConstraintTree = ConstraintTree {
 ///                               combinator: Combinator::Or,
@@ -155,7 +157,7 @@ impl fmt::Debug for ConstraintTree {
 /// let v = untreeify(tree);
 /// assert_eq!(v, "(1.2.3,4.5.6)|<=7.8.9");
 /// ```
-pub fn untreeify(spec: &ConstraintTree) -> String {
+pub fn untreeify(spec: &ConstraintTree) -> Result<String, &'static str> {
     spec.combine(false, false)
 }
 
@@ -223,7 +225,7 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -
 /// ```
 /// use ronda::{treeify, ConstraintTree, StringOrConstraintTree, Combinator};
 ///
-///  let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1");
+///  let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1").unwrap();
 ///  assert_eq!(v, ConstraintTree {
 ///                  combinator: Combinator::Or,
 ///                  parts: vec![
@@ -296,38 +298,38 @@ mod tests {
 
     #[test]
     fn untreeify_single() {
-        let v = untreeify(&"1.2.3".into());
+        let v = untreeify(&"1.2.3".try_into().unwrap()).unwrap();
         assert_eq!(v, "1.2.3");
     }
 
     #[test]
     fn untreeify_simple_and() {
-        let v = untreeify(&vec![",", "1.2.3", ">4.5.6"].into());
+        let v = untreeify(&vec![",", "1.2.3", ">4.5.6"].try_into().unwrap()).unwrap();
         assert_eq!(v, "1.2.3,>4.5.6");
     }
 
     #[test]
     fn untreeify_simple_or() {
-        let v = untreeify(&vec!["|", "1.2.3", ">4.5.6"].into());
+        let v = untreeify(&vec!["|", "1.2.3", ">4.5.6"].try_into().unwrap()).unwrap();
         assert_eq!(v, "1.2.3|>4.5.6");
     }
 
     #[test]
     fn untreeify_and_joining_inner_or() {
-        let inner_or: ConstraintTree = vec!["|", "1.2.3", "4.5.6"].into();
+        let inner_or: ConstraintTree = vec!["|", "1.2.3", "4.5.6"].try_into().unwrap();
         let v = untreeify(&ConstraintTree {
             combinator: Combinator::And,
             parts: vec![
                 Box::new(StringOrConstraintTree::ConstraintTree(inner_or)),
                 Box::new(StringOrConstraintTree::String("<=7.8.9".to_string())),
             ]
-        });
+        }).unwrap();
         assert_eq!(v, "(1.2.3|4.5.6),<=7.8.9");
     }
 
     #[test]
     fn untreeify_nested() {
-        let or_6_7: ConstraintTree = vec!["|", "1.6", "1.7"].into();
+        let or_6_7: ConstraintTree = vec!["|", "1.6", "1.7"].try_into().unwrap();
         let or_6_7_and_8_9: ConstraintTree = ConstraintTree{
             combinator: Combinator::And,
             parts: vec![
@@ -343,13 +345,13 @@ mod tests {
                 Box::new(StringOrConstraintTree::String("2.0".to_string())),
                 Box::new(StringOrConstraintTree::String("2.1".to_string())),
             ]};
-        let v = untreeify(&or_with_inner_group);
+        let v = untreeify(&or_with_inner_group).unwrap();
         assert_eq!(v, "1.5|((1.6|1.7),1.8,1.9)|2.0|2.1");
     }
 
     #[test]
     fn treeify_single() {
-        let v = treeify("1.2.3");
+        let v = treeify("1.2.3").unwrap();
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::None,
             parts: vec![
@@ -359,7 +361,7 @@ mod tests {
 
     #[test]
     fn treeify_simple_and() {
-        let v = treeify("1.2.3,>4.5.6");
+        let v = treeify("1.2.3,>4.5.6").unwrap();
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::And,
             parts: vec![
@@ -371,7 +373,7 @@ mod tests {
 
     #[test]
     fn treeify_and_or_grouping() {
-        let v = treeify("1.2.3,4.5.6|<=7.8.9");
+        let v = treeify("1.2.3,4.5.6|<=7.8.9").unwrap();
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
@@ -389,7 +391,7 @@ mod tests {
 
     #[test]
     fn treeify_and_with_or_in_parens() {
-        let v = treeify("(1.2.3|4.5.6),<=7.8.9");
+        let v = treeify("(1.2.3|4.5.6),<=7.8.9").unwrap();
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::And,
             parts: vec![
@@ -407,7 +409,7 @@ mod tests {
 
     #[test]
     fn treeify_nest_or_in_parens() {
-        let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1");
+        let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1").unwrap();
 
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::Or,
@@ -432,7 +434,7 @@ mod tests {
 
     #[test]
     fn treeify_nest_or_in_parens_2() {
-        let v = treeify("1.5|(1.6|1.7),1.8,1.9|2.0|2.1");
+        let v = treeify("1.5|(1.6|1.7),1.8,1.9|2.0|2.1").unwrap();
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
