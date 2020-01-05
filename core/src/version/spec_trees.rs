@@ -25,11 +25,13 @@ pub enum Combinator {
 
 impl ConstraintTree {
     fn combine(&self, inand:bool, nested: bool) -> Result<String, &'static str> {
-        let mut res: String = "".to_string();
         match self.parts.len() {
             1 => {
-                res = if let StringOrConstraintTree::String(s) = self.parts[0].deref() {
-                    s.to_string() } else { Err("Can't combine (stringify) single-element ConstraintTree that isn't just a string") };
+                if let StringOrConstraintTree::String(s) = self.parts[0].deref() {
+                    Ok(s.to_string())
+                } else {
+                    Err("Can't combine (stringify) single-element ConstraintTree that isn't just a string")
+                }
             },
             0 => Err("Can't combine (stringify) a zero-element ConstraintTree"),
             _ => {
@@ -52,9 +54,9 @@ impl ConstraintTree {
                 if inand || nested {
                     res = format!("({})", res);
                 }
+                Ok(res)
             }
         }
-        Ok(res)
     }
 }
 
@@ -113,14 +115,14 @@ impl TryFrom<Vec<&str>> for ConstraintTree
 {
     type Error = &'static str;
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        let combinator = match s[0]{
+        let combinator = match input[0]{
             "," => Combinator::And,
             "|" => Combinator::Or,
             _ => return Err("Unknown first value in vec of str used as ConstraintTree")
         };
         Ok(ConstraintTree {
             combinator,
-            parts: s[1..].iter().map(|x| Box::new(StringOrConstraintTree::String(x.to_string()))).collect()
+            parts: input[1..].iter().map(|x| Box::new(StringOrConstraintTree::String(x.to_string()))).collect()
         })
     }
 }
@@ -154,7 +156,7 @@ impl fmt::Debug for ConstraintTree {
 ///                               parts: vec![
 ///                                     Box::new(StringOrConstraintTree::ConstraintTree(cj123_456)),
 ///                                     Box::new(StringOrConstraintTree::String("<=7.8.9".to_string()))]};
-/// let v = untreeify(tree);
+/// let v = untreeify(&tree);
 /// assert_eq!(v, "(1.2.3,4.5.6)|<=7.8.9");
 /// ```
 pub fn untreeify(spec: &ConstraintTree) -> Result<String, &'static str> {
@@ -199,7 +201,7 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -
                     if a.combinator == c {
                         condensed = a.clone().parts.into_iter().chain(condensed.into_iter()).collect();
                     } else {
-                        condensed.insert(0,(Box::new(StringOrConstraintTree::ConstraintTree(a.clone()))))
+                        condensed.insert(0,Box::new(StringOrConstraintTree::ConstraintTree(a.clone())))
                     }
                 },
                 StringOrConstraintTree::String(a) => condensed.insert(0,

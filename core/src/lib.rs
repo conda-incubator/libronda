@@ -8,6 +8,7 @@
 //#![feature(async_await)]
 
 #[macro_use] extern crate lazy_static;
+#[macro_use] extern crate enum_dispatch;
 #[cfg(test)]
 #[macro_use] extern crate rstest;
 
@@ -21,5 +22,5 @@ pub use crate::version::CompOp;
 pub use crate::version::Version;
 pub use crate::version::VersionPart;
 pub use crate::version::conda_parser;
-pub use crate::version::matching::{untreeify, treeify, ConstraintTree, StringOrConstraintTree, Combinator};
+pub use crate::version::spec_trees::{untreeify, treeify, ConstraintTree, StringOrConstraintTree, Combinator};
 pub use crate::repodata::repodata::{Repodata, RepodataInfo, Record};
