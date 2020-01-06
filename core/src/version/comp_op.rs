@@ -7,7 +7,6 @@
 //! sign from a string.
 
 use std::cmp::Ordering;
-use crate::version::comp_op::CompOp::Compatible;
 
 /// Enum of supported comparison operators.
 #[derive(Debug, Clone, PartialEq)]
@@ -75,6 +74,7 @@ impl CompOp {
     /// * `=` -> `StartsWith`
     /// * `!=startswith ` -> `NotStartsWith`
     /// * `~=` -> `Compatible`
+    /// * `!~=` -> `Incompatible`
     ///
     /// # Examples
     ///
@@ -94,10 +94,10 @@ impl CompOp {
             "<=" => Ok(CompOp::Le),
             ">=" => Ok(CompOp::Ge),
             ">" => Ok(CompOp::Gt),
-            "=" => CompOp:StartsWith,
-            "!=startswith" => CompOp::NotStartsWith,
-            "~=" => CompOp::Compatible,
-            "!~=" => CompOp::Incompatible,
+            "=" => Ok(CompOp::StartsWith),
+            "!=startswith" => Ok(CompOp::NotStartsWith),
+            "~=" => Ok(CompOp::Compatible),
+            "!~=" => Ok(CompOp::Incompatible),
             _ => Err(()),
         }
     }
@@ -465,10 +465,10 @@ mod tests {
         assert_eq!(CompOp::from_name("le").unwrap(), CompOp::Le);
         assert_eq!(CompOp::from_name("ge").unwrap(), CompOp::Ge);
         assert_eq!(CompOp::from_name("gt").unwrap(), CompOp::Gt);
-        assert_eq!(CompOp::from_sign("startswith").unwrap(), CompOp::StartsWith);
-        assert_eq!(CompOp::from_sign("notstartswith").unwrap(), CompOp::NotStartsWith);
-        assert_eq!(CompOp::from_sign("compatible").unwrap(), CompOp::Compatible);
-        assert_eq!(CompOp::from_sign("incompatible").unwrap(), CompOp::Incompatible);
+        assert_eq!(CompOp::from_name("startswith").unwrap(), CompOp::StartsWith);
+        assert_eq!(CompOp::from_name("notstartswith").unwrap(), CompOp::NotStartsWith);
+        assert_eq!(CompOp::from_name("compatible").unwrap(), CompOp::Compatible);
+        assert_eq!(CompOp::from_name("incompatible").unwrap(), CompOp::Incompatible);
 
         // Exceptional cases
         assert_eq!(CompOp::from_name("  Le  ").unwrap(), CompOp::Le);
@@ -553,31 +553,33 @@ mod tests {
     }
 
     #[test]
-    fn as_as_oppositeped() {
-        assert_eq!(CompOp::Eq.as_as_oppositeped(), CompOp::Eq);
-        assert_eq!(CompOp::Ne.as_flipped(), CompOp::Ne);
+    fn as_flipped() {
         assert_eq!(CompOp::Lt.as_flipped(), CompOp::Gt);
         assert_eq!(CompOp::Le.as_flipped(), CompOp::Ge);
         assert_eq!(CompOp::Ge.as_flipped(), CompOp::Le);
         assert_eq!(CompOp::Gt.as_flipped(), CompOp::Lt);
-        assert_eq!(CompOp::StartsWith.as_flipped(), CompOp::NotStartsWith);
-        assert_eq!(CompOp::NotStartsWith.as_flipped(), CompOp::StartsWith);
-        assert_eq!(CompOp::Compatible.as_flipped(), CompOp::Incompatible);
-        assert_eq!(CompOp::Incompatible.as_flipped(), CompOp::Compatible);
+        // Not touched
+        assert_eq!(CompOp::Eq.as_flipped(), CompOp::Eq);
+        assert_eq!(CompOp::Ne.as_flipped(), CompOp::Ne);
+        assert_eq!(CompOp::StartsWith.as_flipped(), CompOp::StartsWith);
+        assert_eq!(CompOp::StartsWith.as_flipped(), CompOp::StartsWith);
+        assert_eq!(CompOp::Compatible.as_flipped(), CompOp::Compatible);
+        assert_eq!(CompOp::Incompatible.as_flipped(), CompOp::Incompatible);
     }
 
     #[test]
     fn flip() {
-        assert_eq!(CompOp::Eq.flip(), CompOp::Eq);
-        assert_eq!(CompOp::Ne.flip(), CompOp::Ne);
         assert_eq!(CompOp::Lt.flip(), CompOp::Gt);
         assert_eq!(CompOp::Le.flip(), CompOp::Ge);
         assert_eq!(CompOp::Ge.flip(), CompOp::Le);
         assert_eq!(CompOp::Gt.flip(), CompOp::Lt);
-        assert_eq!(CompOp::StartsWith.flip(), CompOp::NotStartsWith);
-        assert_eq!(CompOp::NotStartsWith.flip(), CompOp::StartsWith);
-        assert_eq!(CompOp::Compatible.flip(), CompOp::Incompatible);
-        assert_eq!(CompOp::Incompatible.flip(), CompOp::Compatible);
+        // Not touched
+        assert_eq!(CompOp::Eq.flip(), CompOp::Eq);
+        assert_eq!(CompOp::Ne.flip(), CompOp::Ne);
+        assert_eq!(CompOp::StartsWith.flip(), CompOp::StartsWith);
+        assert_eq!(CompOp::NotStartsWith.flip(), CompOp::NotStartsWith);
+        assert_eq!(CompOp::Compatible.flip(), CompOp::Compatible);
+        assert_eq!(CompOp::Incompatible.flip(), CompOp::Incompatible);
     }
 
     #[test]

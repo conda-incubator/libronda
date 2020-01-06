@@ -1,18 +1,14 @@
 use cpython::{PyResult, CompareOp, ToPyObject, PythonObject};
+use ronda::{Version, CompOp, read_repodata};
 
-use crate::{repodata, Version, CompOp};
-use crate::repodata::repodata::read_repodata;
-
-impl From<CompareOp> for CompOp {
-    fn from(other: CompareOp) -> CompOp {
-        match other {
-            CompareOp::Eq => CompOp::Eq,
-            CompareOp::Ge => CompOp::Ge,
-            CompareOp::Le => CompOp::Le,
-            CompareOp::Lt => CompOp::Lt,
-            CompareOp::Gt => CompOp::Gt,
-            CompareOp::Ne => CompOp::Ne
-        }
+fn py_cmp_to_ronda_cmp(other: CompareOp) -> CompOp {
+    match other {
+        CompareOp::Eq => CompOp::Eq,
+        CompareOp::Ge => CompOp::Ge,
+        CompareOp::Le => CompOp::Le,
+        CompareOp::Lt => CompOp::Lt,
+        CompareOp::Gt => CompOp::Gt,
+        CompareOp::Ne => CompOp::Ne
     }
 }
 
@@ -33,7 +29,7 @@ py_class!(class RustyVersion |py| {
         RustyVersion::create_instance(py, arg.into())
     }
     def __richcmp__(&self, other: &RustyVersion, op: CompareOp) -> PyResult<bool> {
-        Ok(self.rust_version(py).compare_to_version(other.rust_version(py), &op.into()))
+        Ok(self.rust_version(py).compare_to_version(other.rust_version(py), &py_cmp_to_ronda_cmp(op)))
     }
     def __repr__(&self) -> PyResult<String> {
         Ok(self.rust_version(py).as_str().to_string())
