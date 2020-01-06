@@ -434,7 +434,6 @@ impl CompOp {
 #[cfg(test)]
 mod tests {
     use std::cmp::Ordering;
-
     use super::CompOp;
 
     #[test]

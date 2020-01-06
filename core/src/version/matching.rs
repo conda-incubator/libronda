@@ -209,3 +209,210 @@ impl MatchFn for MatchExact {
         other == self.spec
     }
 }
+
+
+#[cfg_attr(tarpaulin, skip)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test::assert_test_result;
+
+    #[test]
+    fn test_hexrd() {
+        VERSIONS = ['0.3.0.dev', '0.3.3']
+        vos = [VersionOrder(v) for v in VERSIONS]
+        self.assertEqual(sorted(vos), vos)
+    }
+
+    #[test]
+    fn test_ver_eval() {
+        assert_eq!(VersionSpec::try_from("==1.7").unwrap().test_match("1.7.0"), true);
+        assert_eq!(VersionSpec::try_from("<=1.7").unwrap().test_match("1.7.0"), true);
+        assert_eq!(VersionSpec::try_from("<1.7").unwrap().test_match("1.7.0"), false);
+        assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.7.0"), true);
+        assert_eq!(VersionSpec::try_from(">1.7").unwrap().test_match("1.7.0"), false);
+        assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.6.7"), false);
+        self.assertEqual(ver_eval('2013a', '>2013b'), False)
+        self.assertEqual(ver_eval('2013k', '>2013b'), True)
+        self.assertEqual(ver_eval('3.0.0', '>2013b'), False)
+        self.assertEqual(ver_eval('1.0.0', '>1.0.0a'), True)
+        self.assertEqual(ver_eval('1.0.0', '>1.0.0*'), True)
+        self.assertEqual(ver_eval('1.0', '1.0*'), True)
+        self.assertEqual(ver_eval('1.0.0', '1.0*'), True)
+        self.assertEqual(ver_eval('1.0', '1.0.0*'), True)
+        self.assertEqual(ver_eval('1.0.1', '1.0.0*'), False)
+        self.assertEqual(ver_eval('2013a', '2013a*'), True)
+        self.assertEqual(ver_eval('2013a', '2013b*'), False)
+        self.assertEqual(ver_eval('2013ab', '2013a*'), True)
+        self.assertEqual(ver_eval('1.3.4', '1.2.4*'), False)
+        self.assertEqual(ver_eval('1.2.3+4.5.6', '1.2.3*'), True)
+        self.assertEqual(ver_eval('1.2.3+4.5.6', '1.2.3+4*'), True)
+        self.assertEqual(ver_eval('1.2.3+4.5.6', '1.2.3+5*'), False)
+        self.assertEqual(ver_eval('1.2.3+4.5.6', '1.2.4+5*'), False)
+    }
+
+    #[test]
+    fn test_ver_eval_errors() {
+        self.assertRaises(InvalidVersionSpec, ver_eval, '3.0.0', '><2.4.5')
+        self.assertRaises(InvalidVersionSpec, ver_eval, '3.0.0', '!!2.4.5')
+        self.assertRaises(InvalidVersionSpec, ver_eval, '3.0.0', '!')
+    }
+
+    #[test]
+    fn test_version_spec_1() {
+        let v1 = VersionSpec::try_from("1.7.1").unwrap();
+        let v2 = VersionSpec::try_from("1.7.1*").unwrap();
+        let v3 = VersionSpec::try_from("1.7.1").unwrap();
+        assert!(v1.is_exact());
+        assert_ne!(v2.is_exact(), true);
+        assert!(v3.is_exact());
+        assert_eq!(v1, v3);
+        assert_ne!(v1, v2);
+        assert_ne!(v3, v2);
+        self.assertTrue(v1 != 1.0)
+        self.assertFalse(v1 == 1.0)
+            // hash tests here are testing caching - are equal values created as just one object?
+        self.assertEqual(hash(v1), hash(v3))
+        self.assertNotEqual(hash(v1), hash(v2))
+    }
+
+    #[test]
+    fn test_version_spec_2() {
+        v1 = VersionSpec('( (1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1')
+        self.assertEqual(v1.spec, '1.5|1.6|1.7,1.8,1.9|2.0|2.1')
+        self.assertRaises(InvalidVersionSpec, VersionSpec, '(1.5')
+        self.assertRaises(InvalidVersionSpec, VersionSpec, '1.5)')
+        self.assertRaises(InvalidVersionSpec, VersionSpec, '1.5||1.6')
+        self.assertRaises(InvalidVersionSpec, VersionSpec, '^1.5')
+    }
+
+    #[test]
+    fn test_version_spec_3(){
+        v1 = VersionSpec('1.7.1*')
+        v2 = VersionSpec('1.7.1.*')
+        self.assertFalse(v1.is_exact())
+        self.assertFalse(v2.is_exact())
+        self.assertTrue(v1 == v2)
+        self.assertFalse(v1 != v2)
+        self.assertEqual(hash(v1), hash(v2))
+    }
+
+    #[test]
+    fn test_version_spec_4() {
+        let v1 = VersionSpec("1.7.1*,1.8.1*");
+        let v2 = VersionSpec("1.7.1.*,1.8.1.*");
+        let v3 = VersionSpec("1.7.1*,1.8.1.*");
+        assert v1.is_exact() is False
+        assert v2.is_exact() is False
+        assert v1 == v2 == v3
+        assert not v1 != v2
+        assert hash(v1) == hash(v2) == hash(v3)
+    }
+
+    #[test]
+    fn test_match() {
+        for vspec, res in [
+        ('1.7.*', True),   ('1.7.1', True),    ('1.7.0', False),
+        ('1.7', False),   ('1.5.*', False),    ('>=1.5', True),
+        ('!=1.5', True),  ('!=1.7.1', False), ('==1.7.1', True),
+        ('==1.7', False), ('==1.7.2', False), ('==1.7.1.0', True),
+        ('1.7.*|1.8.*', True),
+        // ('1.8/*|1.9.*', False),  what was this supposed to be?
+                ('>1.7,<1.8', True), ('>1.7.1,<1.8', False),
+                ('^1.7.1$', True), (r'^1\.7\.1$', True), (r'^1\.7\.[0-9]+$', True),
+                ('^1\.8.*$', False), (r'^1\.[5-8]\.1$', True), (r'^[^1].*$', False),
+                (r'^[0-9+]+\.[0-9+]+\.[0-9]+$', True), ('^$', False),
+                ('^.*$', True), ('1.7.*|^0.*$', True), ('1.6.*|^0.*$', False),
+                ('1.6.*|^0.*$|1.7.1', True), ('^0.*$|1.7.1', True),
+                (r'1.6.*|^.*\.7\.1$|0.7.1', True), ('*', True), ('1.*.1', True),
+                ('1.5.*|>1.7,<1.8', True), ('1.5.*|>1.7,<1.7.1', False),
+            ]:
+                m = VersionSpec(vspec)
+                assert VersionSpec(m) is m
+                assert str(m) == vspec
+                assert repr(m) == "VersionSpec('%s')" % vspec
+                assert m.match('1.7.1') == res, vspec
+    }
+
+    #[test]
+    fn test_local_identifier() {
+        """The separator for the local identifier should be either `.` or `+`"""
+        # a valid versionstr should match itself
+        versions = (
+            '1.7.0'
+        '1.7.0.post123'
+        '1.7.0.post123.gabcdef9',
+        '1.7.0.post123 + gabcdef9',
+        )
+        for version in versions:
+            m = VersionSpec(version)
+        self.assertTrue(m.match (version))
+    }
+
+    #[test]
+    fn test_not_eq_star() {
+        assert VersionSpec("=3.3").match ("3.3.1")
+        assert VersionSpec("=3.3").match ("3.3")
+        assert not VersionSpec("=3.3").match ("3.4")
+
+        assert VersionSpec("3.3.*").match ("3.3.1")
+        assert VersionSpec("3.3.*").match ("3.3")
+        assert not VersionSpec("3.3.*").match ("3.4")
+
+        assert VersionSpec("=3.3.*").match ("3.3.1")
+        assert VersionSpec("=3.3.*").match ("3.3")
+        assert not VersionSpec("=3.3.*").match ("3.4")
+
+        assert not VersionSpec("!=3.3.*").match ("3.3.1")
+        assert VersionSpec("!=3.3.*").match ("3.4")
+        assert VersionSpec("!=3.3.*").match ("3.4.1")
+
+        assert VersionSpec("!=3.3").match ("3.3.1")
+        assert not VersionSpec("!=3.3").match ("3.3.0.0")
+        assert not VersionSpec("!=3.3.*").match ("3.3.0.0")
+    }
+
+    #[test]
+    fn test_compound_versions() {
+        vs = VersionSpec('>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*')
+        assert not vs.match('2.6.8')
+        assert vs.match('2.7.2')
+        assert not vs.match('3.3')
+        assert not vs.match('3.3.4')
+        assert vs.match('3.4')
+        assert vs.match('3.4a')
+    }
+
+    #[test]
+    fn test_invalid_version_specs() {
+        with pytest.raises(InvalidVersionSpec):
+            VersionSpec("~")
+        with pytest.raises(InvalidVersionSpec):
+            VersionSpec("^")
+    }
+
+    #[test]
+    fn test_compatible_release_versions() {
+        assert VersionSpec("~=1.10").match ("1.11.0")
+        assert not VersionSpec("~=1.10.0").match ("1.11.0")
+
+        assert not VersionSpec("~=3.3.2").match ("3.4.0")
+        assert not VersionSpec("~=3.3.2").match ("3.3.1")
+        assert VersionSpec("~=3.3.2").match ("3.3.2.0")
+        assert VersionSpec("~=3.3.2").match ("3.3.3")
+
+        assert VersionSpec("~=3.3.2|==2.2").match ("2.2.0")
+        assert VersionSpec("~=3.3.2|==2.2").match ("3.3.3")
+        assert not VersionSpec("~=3.3.2|==2.2").match ("2.2.1")
+
+        with pytest.raises(InvalidVersionSpec):
+            VersionSpec("~=3.3.2.*")
+    }
+
+    #[test]
+    fn test_pep_440_arbitrary_equality_operator() {
+        // We're going to leave the not implemented for now.
+        with pytest.raises(InvalidVersionSpec):
+            VersionSpec("===3.3.2")
+    }
+}
