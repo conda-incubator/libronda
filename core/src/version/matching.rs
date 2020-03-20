@@ -218,13 +218,6 @@ mod tests {
     use test::assert_test_result;
 
     #[test]
-    fn test_hexrd() {
-        VERSIONS = ['0.3.0.dev', '0.3.3']
-        vos = [VersionOrder(v) for v in VERSIONS]
-        self.assertEqual(sorted(vos), vos)
-    }
-
-    #[test]
     fn test_ver_eval() {
         assert_eq!(VersionSpec::try_from("==1.7").unwrap().test_match("1.7.0"), true);
         assert_eq!(VersionSpec::try_from("<=1.7").unwrap().test_match("1.7.0"), true);
@@ -232,30 +225,31 @@ mod tests {
         assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.7.0"), true);
         assert_eq!(VersionSpec::try_from(">1.7").unwrap().test_match("1.7.0"), false);
         assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.6.7"), false);
-        self.assertEqual(ver_eval('2013a', '>2013b'), False)
-        self.assertEqual(ver_eval('2013k', '>2013b'), True)
-        self.assertEqual(ver_eval('3.0.0', '>2013b'), False)
-        self.assertEqual(ver_eval('1.0.0', '>1.0.0a'), True)
-        self.assertEqual(ver_eval('1.0.0', '>1.0.0*'), True)
-        self.assertEqual(ver_eval('1.0', '1.0*'), True)
-        self.assertEqual(ver_eval('1.0.0', '1.0*'), True)
-        self.assertEqual(ver_eval('1.0', '1.0.0*'), True)
-        self.assertEqual(ver_eval('1.0.1', '1.0.0*'), False)
-        self.assertEqual(ver_eval('2013a', '2013a*'), True)
-        self.assertEqual(ver_eval('2013a', '2013b*'), False)
-        self.assertEqual(ver_eval('2013ab', '2013a*'), True)
-        self.assertEqual(ver_eval('1.3.4', '1.2.4*'), False)
-        self.assertEqual(ver_eval('1.2.3+4.5.6', '1.2.3*'), True)
-        self.assertEqual(ver_eval('1.2.3+4.5.6', '1.2.3+4*'), True)
-        self.assertEqual(ver_eval('1.2.3+4.5.6', '1.2.3+5*'), False)
-        self.assertEqual(ver_eval('1.2.3+4.5.6', '1.2.4+5*'), False)
+        assert_eq!(VersionSpec::try_from("2013a").unwrap().test_match(">2013b"), false);
+        assert_eq!(VersionSpec::try_from("2013k").unwrap().test_match(">2013b"), true);
+        assert_eq!(VersionSpec::try_from("3.0.0").unwrap().test_match(">2013b"), false);
+        assert_eq!(VersionSpec::try_from("1.0.0").unwrap().test_match(">1.0.0a"), true);
+        assert_eq!(VersionSpec::try_from("1.0.0").unwrap().test_match(">1.0.0*"), true);
+        assert_eq!(VersionSpec::try_from("1.0").unwrap().test_match("1.0*"), true);
+        assert_eq!(VersionSpec::try_from("1.0.0").unwrap().test_match("1.0*"), true);
+        assert_eq!(VersionSpec::try_from("1.0").unwrap().test_match("1.0.0*"), true);
+        assert_eq!(VersionSpec::try_from("1.0.1").unwrap().test_match("1.0.0*"), false);
+        assert_eq!(VersionSpec::try_from("2013a").unwrap().test_match("2013a*"), true);
+        assert_eq!(VersionSpec::try_from("2013a").unwrap().test_match("2013b*"), false);
+        assert_eq!(VersionSpec::try_from("2013ab").unwrap().test_match("2013a*"), true);
+        assert_eq!(VersionSpec::try_from("1.3.4").unwrap().test_match("1.2.4*"), false);
+        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.3*"), true);
+        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.3+4*"), true);
+        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.3+5*"), false);
+        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.4+5*"), false);
     }
 
     #[test]
     fn test_ver_eval_errors() {
-        self.assertRaises(InvalidVersionSpec, ver_eval, '3.0.0', '><2.4.5')
-        self.assertRaises(InvalidVersionSpec, ver_eval, '3.0.0', '!!2.4.5')
-        self.assertRaises(InvalidVersionSpec, ver_eval, '3.0.0', '!')
+        // each of these should raise
+        VersionSpec::try_from("3.0.0").unwrap().test_match("><2.4.5");
+        VersionSpec::try_from("3.0.0").unwrap().test_match("!!2.4.5");
+        VersionSpec::try_from("3.0.0").unwrap().test_match("!");
     }
 
     #[test]
@@ -269,44 +263,58 @@ mod tests {
         assert_eq!(v1, v3);
         assert_ne!(v1, v2);
         assert_ne!(v3, v2);
-        self.assertTrue(v1 != 1.0)
-        self.assertFalse(v1 == 1.0)
-            // hash tests here are testing caching - are equal values created as just one object?
-        self.assertEqual(hash(v1), hash(v3))
-        self.assertNotEqual(hash(v1), hash(v2))
+        assert_ne!(v1, 1.0);
+        // pointer tests here are testing caching - are equal values created as just one object?
+        // https://users.rust-lang.org/t/is-any-way-to-know-references-are-referencing-the-same-object/9716/6
+        assert_eq!(&v1 as *const _, &v3 as *const _);
+        assert_neq!(&v1 as *const _, &v2 as *const _);
     }
 
     #[test]
     fn test_version_spec_2() {
-        v1 = VersionSpec('( (1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1')
-        self.assertEqual(v1.spec, '1.5|1.6|1.7,1.8,1.9|2.0|2.1')
-        self.assertRaises(InvalidVersionSpec, VersionSpec, '(1.5')
-        self.assertRaises(InvalidVersionSpec, VersionSpec, '1.5)')
-        self.assertRaises(InvalidVersionSpec, VersionSpec, '1.5||1.6')
-        self.assertRaises(InvalidVersionSpec, VersionSpec, '^1.5')
+        v1 = VersionSpec::try_from("( (1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1");
+        assert_eq!(v1.spec, "1.5|1.6|1.7,1.8,1.9|2.0|2.1");
+        match VersionSpec::try_from("(1.5"){
+            Ok => panic!(),
+            _ => true
+        };
+        match VersionSpec::try_from("1.5)"){
+            Ok => panic!(),
+            _ => true
+        };
+        match VersionSpec::try_from("1.5||1.6"){
+            Ok => panic!(),
+            _ => true
+        };
+        match VersionSpec::try_from("^1.5"){
+            Ok => panic!(),
+            _ => true
+        };
     }
 
     #[test]
     fn test_version_spec_3(){
-        v1 = VersionSpec('1.7.1*')
-        v2 = VersionSpec('1.7.1.*')
-        self.assertFalse(v1.is_exact())
-        self.assertFalse(v2.is_exact())
-        self.assertTrue(v1 == v2)
-        self.assertFalse(v1 != v2)
-        self.assertEqual(hash(v1), hash(v2))
+        let v1 = VersionSpec::try_from("1.7.1*").unwrap();
+        let v2 = VersionSpec::try_from("1.7.1.*").unwrap();
+        assert_eq!(v1.is_exact(), false);
+        assert_eq!(v2.is_exact(), false);
+        assert!(v1 == v2);
+        assert_eq!(v1 != v2, false);
+        assert_eq!(&v1 as *const _, &v2 as *const _);
     }
 
     #[test]
     fn test_version_spec_4() {
-        let v1 = VersionSpec("1.7.1*,1.8.1*");
-        let v2 = VersionSpec("1.7.1.*,1.8.1.*");
-        let v3 = VersionSpec("1.7.1*,1.8.1.*");
-        assert v1.is_exact() is False
-        assert v2.is_exact() is False
-        assert v1 == v2 == v3
-        assert not v1 != v2
-        assert hash(v1) == hash(v2) == hash(v3)
+        let v1 = VersionSpec::try_from("1.7.1*,1.8.1*").unwrap();
+        let v2 = VersionSpec::try_from("1.7.1.*,1.8.1.*").unwrap();
+        let v3 = VersionSpec::try_from("1.7.1*,1.8.1.*").unwrap();
+        assert_eq!(v1.is_exact(), false);
+        assert_eq!(v2.is_exact(), false);
+        assert!((v1 == v2) && (v2 == v3));
+        assert_eq!(v1 != v2, false);
+        assert_eq!(&v1 as *const _, &v2 as *const _);
+        assert_eq!(&v1 as *const _, &v3 as *const _);
+
     }
 
     #[test]
@@ -336,8 +344,8 @@ mod tests {
 
     #[test]
     fn test_local_identifier() {
-        """The separator for the local identifier should be either `.` or `+`"""
-        # a valid versionstr should match itself
+        //"""The separator for the local identifier should be either `.` or `+`"""
+        // a valid versionstr should match itself
         versions = (
             '1.7.0'
         '1.7.0.post123'
@@ -351,68 +359,76 @@ mod tests {
 
     #[test]
     fn test_not_eq_star() {
-        assert VersionSpec("=3.3").match ("3.3.1")
-        assert VersionSpec("=3.3").match ("3.3")
-        assert not VersionSpec("=3.3").match ("3.4")
+        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.3.1"), true);
+        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.3"), true);
+        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.4"), false);
 
-        assert VersionSpec("3.3.*").match ("3.3.1")
-        assert VersionSpec("3.3.*").match ("3.3")
-        assert not VersionSpec("3.3.*").match ("3.4")
+        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.3.1"), true);
+        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.3"), true);
+        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.4"), false);
 
-        assert VersionSpec("=3.3.*").match ("3.3.1")
-        assert VersionSpec("=3.3.*").match ("3.3")
-        assert not VersionSpec("=3.3.*").match ("3.4")
+        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.3.1"), true);
+        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.3"), true);
+        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.4"), false);
 
-        assert not VersionSpec("!=3.3.*").match ("3.3.1")
-        assert VersionSpec("!=3.3.*").match ("3.4")
-        assert VersionSpec("!=3.3.*").match ("3.4.1")
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.3.1"), false);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.4"), true);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.4.1"), true);
 
-        assert VersionSpec("!=3.3").match ("3.3.1")
-        assert not VersionSpec("!=3.3").match ("3.3.0.0")
-        assert not VersionSpec("!=3.3.*").match ("3.3.0.0")
+        assert_eq!(VersionSpec::try_from("!=3.3").unwrap().test_match("3.3.1"), true);
+        assert_eq!(VersionSpec::try_from("!=3.3").unwrap().test_match("3.3.0.0"), false);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.3.0.0"), false);
     }
 
     #[test]
     fn test_compound_versions() {
-        vs = VersionSpec('>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*')
-        assert not vs.match('2.6.8')
-        assert vs.match('2.7.2')
-        assert not vs.match('3.3')
-        assert not vs.match('3.3.4')
-        assert vs.match('3.4')
-        assert vs.match('3.4a')
+        let vs = VersionSpec::try_from(">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*").unwrap();
+        assert_eq!(vs.test_match("2.6.8"), false);
+        assert!(vs.test_match("2.7.2"));
+        assert_eq!(vs.test_match("3.3"), false);
+        assert_eq!(vs.test_match("3.3.4"), false);
+        assert!(vs.test_match("3.4"));
+        assert!(vs.test_match("3.4a"));
     }
 
     #[test]
     fn test_invalid_version_specs() {
-        with pytest.raises(InvalidVersionSpec):
-            VersionSpec("~")
-        with pytest.raises(InvalidVersionSpec):
-            VersionSpec("^")
+        match VersionSpec::try_from("~") {
+            Ok => panic!(),
+            _ => true
+        };
+        match VersionSpec::try_from("^") {
+            Ok => panic!(),
+            _ => true
+        };
     }
 
     #[test]
     fn test_compatible_release_versions() {
-        assert VersionSpec("~=1.10").match ("1.11.0")
-        assert not VersionSpec("~=1.10.0").match ("1.11.0")
+        assert_eq!(VersionSpec::try_from("~=1.10").unwrap().test_match("1.11.0"), true);
+        assert_eq!(VersionSpec::try_from("~=1.10.0").unwrap().test_match("1.11.0"), false);
 
-        assert not VersionSpec("~=3.3.2").match ("3.4.0")
-        assert not VersionSpec("~=3.3.2").match ("3.3.1")
-        assert VersionSpec("~=3.3.2").match ("3.3.2.0")
-        assert VersionSpec("~=3.3.2").match ("3.3.3")
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.4.0"), false);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.1"), false);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.2.0"), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.3"), true);
 
-        assert VersionSpec("~=3.3.2|==2.2").match ("2.2.0")
-        assert VersionSpec("~=3.3.2|==2.2").match ("3.3.3")
-        assert not VersionSpec("~=3.3.2|==2.2").match ("2.2.1")
+        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("2.2.0"), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("3.3.3"), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("2.2.1"), false);
 
-        with pytest.raises(InvalidVersionSpec):
-            VersionSpec("~=3.3.2.*")
+        match VersionSpec::try_from("~=3.3.2.*") {
+            Ok => panic!(),
+            _ => true
+        };
     }
 
     #[test]
     fn test_pep_440_arbitrary_equality_operator() {
         // We're going to leave the not implemented for now.
-        with pytest.raises(InvalidVersionSpec):
-            VersionSpec("===3.3.2")
-    }
+        match VersionSpec::try_from("===3.3.2.*") {
+            Ok => panic!(),
+            _ => true
+        };
+     }
 }
