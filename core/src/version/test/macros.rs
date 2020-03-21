@@ -1,4 +1,5 @@
 // some helpful discussion on how this works is at https://github.com/la10736/rstest/issues/66
+//use rstest::rstest;
 
 /// Paste identifiers within a macro invocation that expands to one or more
 /// macro_rules macros or items containing macros.
@@ -6,7 +7,7 @@
 macro_rules! parametrize_versions {
         ( $test:ident ) => {
             paste::item! {
-            #[rstest_parametrize(v_string, n_parts,
+            #[rstest(v_string, n_parts,
             case::one_int("1", 1),
             case::two_ints("1.2", 2),
             case::four_ints("1.2.3.4", 4),
@@ -53,7 +54,7 @@ macro_rules! parametrize_versions {
 macro_rules! parametrize_versions_set {
     ( $test:ident ) => {
         paste::item! {
-            #[rstest_parametrize(a, b, operator,
+            #[rstest(a, b, operator,
             case::equal_strings("1", "1", &CompOp::Eq),
             case::more_zeros_left("1.0.0.0", "1", &CompOp::Eq),
             case::more_zeros_right("1", "1.0.0.0", &CompOp::Eq),

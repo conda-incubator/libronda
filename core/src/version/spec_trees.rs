@@ -2,10 +2,17 @@ use std::ops::Deref;
 use std::fmt;
 use regex::Regex;
 use serde::export::TryFrom;
+use std::collections::HashSet;
+
+
+use crate::CompOp;
+use crate::version::matching::*;
+use std::borrow::Borrow;
+
 
 #[derive(Clone)]
 pub enum StringOrConstraintTree {
-    String(String),
+    String(String),   // a string representation of a matchspec
     ConstraintTree(ConstraintTree), // vec is a mix of &str or other vector(s) of str, possibly nested
 }
 
@@ -35,7 +42,6 @@ impl ConstraintTree {
             0 => Err("Can't combine (stringify) a zero-element ConstraintTree".to_string()),
             _ => {
                 let mut str_parts = vec![];
-                let mut res = "".to_string();
 
                 for item in &self.parts {
                     str_parts.push(match item.deref() {
@@ -46,16 +52,29 @@ impl ConstraintTree {
                     });
                 }
 
-                if self.combinator == Combinator::And {
-                    res = str_parts.join(",");
-                } else {
-                    res = str_parts.join("|");
-                }
+                let mut res = match self.combinator {
+                    Combinator::And => str_parts.join(","),
+                    _ =>  str_parts.join("|")
+                };
                 if inand || nested {
                     res = format!("({})", res);
                 }
                 Ok(res)
             }
+        }
+    }
+
+    pub(crate) fn evaluate(&self, other: &str) -> bool {
+        fn _eval_part(a: &StringOrConstraintTree, b: &str) -> bool {
+            return match a {
+                StringOrConstraintTree::String(val) => VersionSpec::try_from(val.borrow()).unwrap().test_match(b),
+                StringOrConstraintTree::ConstraintTree(val) => val.evaluate(b)
+            }
+        }
+        return match self.combinator {
+            Combinator::And => self.parts.iter().all(|x| _eval_part(x.borrow(), other)),
+            Combinator::Or => self.parts.iter().any(|x| _eval_part(x.borrow(), other)),
+            _ => panic!()
         }
     }
 }
@@ -126,6 +145,8 @@ impl TryFrom<Vec<&str>> for ConstraintTree
         })
     }
 }
+
+
 
 impl fmt::Debug for ConstraintTree {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -293,11 +314,88 @@ pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
 }
 
 
+
+#[derive(Clone)]
+pub(crate) struct VersionSpec {
+    spec_str: String,
+    tree: Option<ConstraintTree>,
+    matcher: MatchEnum,
+    _is_exact: bool
+}
+
+impl Spec for VersionSpec {
+    fn merge(&self, _other: &Self) -> Self { panic!("Not implemented") }
+    fn get_spec(&self) -> &str { &self.spec_str }
+    fn get_matcher(&self) -> &MatchEnum { &self.matcher }
+    fn is_exact(&self) -> bool { self._is_exact }
+}
+
+impl TryFrom<&str> for VersionSpec {
+    type Error = String;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        lazy_static! { static ref REGEX_SPLIT_RE: Regex = Regex::new( r#".*[()|,^$]"# ).unwrap(); }
+        lazy_static! { static ref OPERATOR_START: HashSet<&'static str> = ["=", "<", ">", "!", "~"].iter().cloned().collect(); }
+        let _is_exact = false;
+        let split_input: Vec<&str> = REGEX_SPLIT_RE.split(input).collect();
+        if split_input.len() > 0 {
+            let tree = treeify(input)?;
+            return Ok(tree.into());
+        }
+        let matcher: MatchEnum;
+        let mut _is_exact = false;
+        if input.starts_with("^") || input.ends_with("$") {
+            if ! input.starts_with("^") || ! input.ends_with("$") {
+                return Err(format!("regex specs must start with '^' and end with '$' - spec '{}' is incorrect", input))
+            }
+            matcher = MatchRegex { expression: Regex::new(input).unwrap() }.into();
+            _is_exact = false;
+        } else if OPERATOR_START.contains(&input[..1]) {
+            let (_m, _e) = create_match_enum_from_operator_str(input)?;
+            matcher = _m;
+            _is_exact = _e;
+        } else if input == "*" {
+            matcher = MatchAlways {}.into();
+            _is_exact = false;
+        } else if input.trim_end_matches("*").contains("*") {
+            let rx = input.replace(".", r"\.").replace("+", r"\+").replace("*", r".*");
+            let rx: Regex = Regex::new(&format!(r"^(?:{})$", rx)).unwrap();
+            matcher = MatchRegex { expression: rx }.into();
+            _is_exact = false;
+        } else if input.ends_with("*") {
+            matcher = MatchOperator {
+                operator: CompOp::StartsWith,
+                version: input.trim_end_matches(|c| c=='*' || c=='.').into() }.into();
+            _is_exact = false;
+        } else if ! input.contains("@") {
+            matcher = MatchOperator {operator: CompOp::Eq, version: input.into()}.into();
+            _is_exact = true;
+        } else {
+            matcher = MatchExact { spec: input.to_string() }.into();
+            _is_exact = true;
+        }
+        Ok(VersionSpec { spec_str: input.to_string(), tree: None, matcher, _is_exact })
+    }
+}
+
+impl From<ConstraintTree> for VersionSpec {
+    fn from(tree: ConstraintTree) -> VersionSpec {
+        let matcher = match tree.combinator {
+            Combinator::Or => MatchAny { tree: tree.clone() }.into(),
+            _ => MatchAll { tree: tree.clone() }.into()
+        };
+        let spec_str = untreeify(&tree).unwrap();
+        // ConstraintTree matches are never exact
+        VersionSpec { spec_str, tree: Some(tree), matcher, _is_exact: false }
+    }
+}
+
 #[cfg_attr(tarpaulin, skip)]
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::convert::TryInto;
+    use rstest::rstest;
 
     #[test]
     fn untreeify_single() {
@@ -457,5 +555,241 @@ mod tests {
                 Box::new(StringOrConstraintTree::String("2.0".to_string())),
                 Box::new(StringOrConstraintTree::String("2.1".to_string())),
             ]}, "{:#?}", v);
+    }
+
+    #[test]
+    fn test_ver_eval() {
+        assert_eq!(VersionSpec::try_from("==1.7").unwrap().test_match("1.7.0"), true);
+        assert_eq!(VersionSpec::try_from("<=1.7").unwrap().test_match("1.7.0"), true);
+        assert_eq!(VersionSpec::try_from("<1.7").unwrap().test_match("1.7.0"), false);
+        assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.7.0"), true);
+        assert_eq!(VersionSpec::try_from(">1.7").unwrap().test_match("1.7.0"), false);
+        assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.6.7"), false);
+        assert_eq!(VersionSpec::try_from("2013a").unwrap().test_match(">2013b"), false);
+        assert_eq!(VersionSpec::try_from("2013k").unwrap().test_match(">2013b"), true);
+        assert_eq!(VersionSpec::try_from("3.0.0").unwrap().test_match(">2013b"), false);
+        assert_eq!(VersionSpec::try_from("1.0.0").unwrap().test_match(">1.0.0a"), true);
+        assert_eq!(VersionSpec::try_from("1.0.0").unwrap().test_match(">1.0.0*"), true);
+        assert_eq!(VersionSpec::try_from("1.0").unwrap().test_match("1.0*"), true);
+        assert_eq!(VersionSpec::try_from("1.0.0").unwrap().test_match("1.0*"), true);
+        assert_eq!(VersionSpec::try_from("1.0").unwrap().test_match("1.0.0*"), true);
+        assert_eq!(VersionSpec::try_from("1.0.1").unwrap().test_match("1.0.0*"), false);
+        assert_eq!(VersionSpec::try_from("2013a").unwrap().test_match("2013a*"), true);
+        assert_eq!(VersionSpec::try_from("2013a").unwrap().test_match("2013b*"), false);
+        assert_eq!(VersionSpec::try_from("2013ab").unwrap().test_match("2013a*"), true);
+        assert_eq!(VersionSpec::try_from("1.3.4").unwrap().test_match("1.2.4*"), false);
+        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.3*"), true);
+        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.3+4*"), true);
+        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.3+5*"), false);
+        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.4+5*"), false);
+    }
+
+    #[test]
+    fn test_ver_eval_errors() {
+        // each of these should raise
+        VersionSpec::try_from("3.0.0").unwrap().test_match("><2.4.5");
+        VersionSpec::try_from("3.0.0").unwrap().test_match("!!2.4.5");
+        VersionSpec::try_from("3.0.0").unwrap().test_match("!");
+    }
+
+    #[test]
+    fn test_version_spec_1() {
+        let v1 = VersionSpec::try_from("1.7.1").unwrap();
+        let v2 = VersionSpec::try_from("1.7.1*").unwrap();
+        let v3 = VersionSpec::try_from("1.7.1").unwrap();
+        assert!(v1.is_exact());
+        assert_ne!(v2.is_exact(), true);
+        assert!(v3.is_exact());
+        // right now, VersionSpec instance are not orderable nor equal by value. Versions are, though.
+        // assert_eq!(v1, v3);
+        // assert_ne!(v1, v2);
+        // assert_ne!(v3, v2);
+        // assert_ne!(v1, 1.0);
+        // pointer tests here are testing caching - are equal values created as just one object?
+        // https://users.rust-lang.org/t/is-any-way-to-know-references-are-referencing-the-same-object/9716/6
+        assert_eq!(&v1 as *const _, &v3 as *const _);
+        assert_ne!(&v1 as *const _, &v2 as *const _);
+    }
+
+    #[test]
+    fn test_version_spec_2() {
+        //let v1 = VersionSpec::try_from("( (1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1").unwrap();
+        //assert_eq!(v1.spec, "1.5|1.6|1.7,1.8,1.9|2.0|2.1");
+        match VersionSpec::try_from("(1.5"){
+            Ok(_) => panic!(),
+            _ => true
+        };
+        match VersionSpec::try_from("1.5)"){
+            Ok(_) => panic!(),
+            _ => true
+        };
+        match VersionSpec::try_from("1.5||1.6"){
+            Ok(_) => panic!(),
+            _ => true
+        };
+        match VersionSpec::try_from("^1.5"){
+            Ok(_) => panic!(),
+            _ => true
+        };
+    }
+
+    #[test]
+    fn test_version_spec_3(){
+        let v1 = VersionSpec::try_from("1.7.1*").unwrap();
+        let v2 = VersionSpec::try_from("1.7.1.*").unwrap();
+        assert_eq!(v1.is_exact(), false);
+        assert_eq!(v2.is_exact(), false);
+        // right now, VersionSpec instance are not orderable nor equal by value. Versions are, though.
+        // assert_eq!(v1, v2);
+        // assert_eq!(v1 != v2, false);
+        assert_eq!(&v1 as *const _, &v2 as *const _);
+    }
+
+    #[test]
+    fn test_version_spec_4() {
+        let v1 = VersionSpec::try_from("1.7.1*,1.8.1*").unwrap();
+        let v2 = VersionSpec::try_from("1.7.1.*,1.8.1.*").unwrap();
+        let v3 = VersionSpec::try_from("1.7.1*,1.8.1.*").unwrap();
+        assert_eq!(v1.is_exact(), false);
+        assert_eq!(v2.is_exact(), false);
+        // right now, VersionSpec instance are not orderable nor equal by value. Versions are, though.
+        // assert!((v1 == v2) && (v2 == v3));
+        // assert_eq!(v1 != v2, false);
+        assert_eq!(&v1 as *const _, &v2 as *const _);
+        assert_eq!(&v1 as *const _, &v3 as *const _);
+
+    }
+
+    // case("1.8/*|1.9.*', false),  what was this supposed to be?
+    // case("^1\.8.*$", false),     invalid escape in rust
+
+    #[rstest(vspec, res,
+    case("1.7.*", true),
+    case("1.7.1", true),
+    case("1.7.0", false),
+    case("1.7", false),
+    case("1.5.*", false),
+    case(">=1.5", true),
+    case("!=1.5", true),
+    case("!=1.7.1", false),
+    case("==1.7.1", true),
+    case("==1.7", false),
+    case("==1.7.2", false),
+    case("==1.7.1.0", true),
+    case("1.7.*|1.8.*", true),
+    case(">1.7,<1.8", true),
+    case(">1.7.1,<1.8", false),
+    case("^1.7.1$", true),
+    case(r"^1\.7\.1$", true),
+    case(r"^1\.7\.[0-9]+$", true),
+    case(r"^1\.[5-8]\.1$", true),
+    case(r"^[^1].*$", false),
+    case(r"^[0-9+]+\.[0-9+]+\.[0-9]+$", true),
+    case("^$", false),
+    case("^.*$", true),
+    case("1.7.*|^0.*$", true),
+    case("1.6.*|^0.*$", false),
+    case("1.6.*|^0.*$|1.7.1", true),
+    case("^0.*$|1.7.1", true),
+    case(r"1.6.*|^.*\.7\.1$|0.7.1", true),
+    case("*", true),
+    case("1.*.1", true),
+    case("1.5.*|>1.7,<1.8", true),
+    case("1.5.*|>1.7,<1.7.1", false)
+    )]
+    fn test_match(vspec: &str, res: bool) {
+        let m = VersionSpec::try_from(vspec).unwrap();
+        //assert VersionSpec(m) is m
+        //assert str(m) == vspec
+        //assert repr(m) == "VersionSpec('%s')" % vspec
+        assert_eq!(m.test_match("1.7.1"), res);
+    }
+
+    #[rstest(vspec,
+    case("1.7.0"),
+    case("1.7.0.post123"),
+    case("1.7.0.post123.gabcdef9"),
+    case("1.7.0.post123 + gabcdef9")
+    )]
+    fn test_local_identifier(vspec: &str) {
+        //"""The separator for the local identifier should be either `.` or `+`"""
+        // a valid versionstr should match itself
+        let m = VersionSpec::try_from(vspec).unwrap();
+        assert!(m.test_match (vspec))
+    }
+
+    #[test]
+    fn test_not_eq_star() {
+        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.3.1"), true);
+        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.3"), true);
+        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.4"), false);
+
+        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.3.1"), true);
+        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.3"), true);
+        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.4"), false);
+
+        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.3.1"), true);
+        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.3"), true);
+        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.4"), false);
+
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.3.1"), false);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.4"), true);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.4.1"), true);
+
+        assert_eq!(VersionSpec::try_from("!=3.3").unwrap().test_match("3.3.1"), true);
+        assert_eq!(VersionSpec::try_from("!=3.3").unwrap().test_match("3.3.0.0"), false);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.3.0.0"), false);
+    }
+
+    #[test]
+    fn test_compound_versions() {
+        let vs = VersionSpec::try_from(">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*").unwrap();
+        assert_eq!(vs.test_match("2.6.8"), false);
+        assert!(vs.test_match("2.7.2"));
+        assert_eq!(vs.test_match("3.3"), false);
+        assert_eq!(vs.test_match("3.3.4"), false);
+        assert!(vs.test_match("3.4"));
+        assert!(vs.test_match("3.4a"));
+    }
+
+    #[test]
+    fn test_invalid_version_specs() {
+        match VersionSpec::try_from("~") {
+            Ok(_) => panic!(),
+            _ => true
+        };
+        match VersionSpec::try_from("^") {
+            Ok(_) => panic!(),
+            _ => true
+        };
+    }
+
+    #[test]
+    fn test_compatible_release_versions() {
+        assert_eq!(VersionSpec::try_from("~=1.10").unwrap().test_match("1.11.0"), true);
+        assert_eq!(VersionSpec::try_from("~=1.10.0").unwrap().test_match("1.11.0"), false);
+
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.4.0"), false);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.1"), false);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.2.0"), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.3"), true);
+
+        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("2.2.0"), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("3.3.3"), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("2.2.1"), false);
+
+        match VersionSpec::try_from("~=3.3.2.*") {
+            Ok(_) => panic!(),
+            _ => true
+        };
+    }
+
+    #[test]
+    fn test_pep_440_arbitrary_equality_operator() {
+        // We're going to leave the not implemented for now.
+        match VersionSpec::try_from("===3.3.2.*") {
+            Ok(_) => panic!(),
+            _ => true
+        };
     }
 }
