@@ -22,5 +22,5 @@ pub use crate::version::CompOp;
 pub use crate::version::Version;
 pub use crate::version::VersionPart;
 pub use crate::version::conda_parser;
-pub use crate::version::spec_trees::{untreeify, treeify, ConstraintTree, StringOrConstraintTree, Combinator};
+pub use crate::version::spec_trees::{untreeify, treeify, ConstraintTree, VersionSpecOrConstraintTree, Combinator};
 pub use crate::repodata::repodata::{Repodata, RepodataInfo, Record, read_repodata};

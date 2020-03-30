@@ -2,24 +2,36 @@ use std::ops::Deref;
 use std::fmt;
 use regex::Regex;
 use serde::export::TryFrom;
-use std::collections::HashSet;
 
-
-use crate::CompOp;
-use crate::version::matching::*;
+use crate::version::matching::{MatchEnum, get_matcher};
+use crate::version::Version;
 use std::borrow::Borrow;
 
 
-#[derive(Clone)]
-pub enum StringOrConstraintTree {
-    String(String),   // a string representation of a matchspec
+#[enum_dispatch]
+pub enum VersionSpecOrConstraintTree {
+    VersionSpec(VersionSpec),
     ConstraintTree(ConstraintTree), // vec is a mix of &str or other vector(s) of str, possibly nested
+}
+
+#[enum_dispatch(VersionSpecOrConstraintTree)]
+pub trait Spec {
+    // properties in Python
+    fn raw_value(&self) -> &str { self.get_spec() }
+    fn exact_value(&self) -> Option<&str> {
+        if self.is_exact() { Some(self.get_spec()) } else { None } }
+
+    // properties in Python (to be implemented by other things)
+    fn get_spec(&self) -> &str;
+    fn get_matcher(&self) -> &MatchEnum;
+    fn is_exact(&self) -> bool;
+    fn test_match(&self, other: &Version) -> bool { self.get_matcher().test(other) }
 }
 
 #[derive(Clone)]
 pub struct ConstraintTree {
     pub combinator: Combinator,
-    pub parts: Vec<Box<StringOrConstraintTree>>,
+    pub parts: Vec<Box<VersionSpecOrConstraintTree>>,
 }
 
 #[derive(PartialEq, Clone)]
@@ -33,7 +45,7 @@ impl ConstraintTree {
     fn combine(&self, inand:bool, nested: bool) -> Result<String, String> {
         match self.parts.len() {
             1 => {
-                if let StringOrConstraintTree::String(s) = self.parts[0].deref() {
+                if let VersionSpecOrConstraintTree::VersionSpec(s) = self.parts[0].deref() {
                     Ok(s.to_string())
                 } else {
                     Err("Can't combine (stringify) single-element ConstraintTree that isn't just a string".to_string())
@@ -45,8 +57,8 @@ impl ConstraintTree {
 
                 for item in &self.parts {
                     str_parts.push(match item.deref() {
-                        StringOrConstraintTree::String(s) => s.deref().to_string(),
-                        StringOrConstraintTree::ConstraintTree(cj) => {
+                        VersionSpecOrConstraintTree::VersionSpec(s) => s.deref().to_string(),
+                        VersionSpecOrConstraintTree::ConstraintTree(cj) => {
                             cj.combine(self.combinator == Combinator::And, true)?
                         }
                     });
@@ -65,10 +77,10 @@ impl ConstraintTree {
     }
 
     pub(crate) fn evaluate(&self, other: &str) -> bool {
-        fn _eval_part(a: &StringOrConstraintTree, b: &str) -> bool {
+        fn _eval_part(a: &VersionSpecOrConstraintTree, b: &str) -> bool {
             return match a {
-                StringOrConstraintTree::String(val) => VersionSpec::try_from(val.borrow()).unwrap().test_match(b),
-                StringOrConstraintTree::ConstraintTree(val) => val.evaluate(b)
+                VersionSpecOrConstraintTree::VersionSpec(val) => VersionSpec::try_from(val.borrow()).unwrap().test_match(b),
+                VersionSpecOrConstraintTree::ConstraintTree(val) => val.evaluate(b)
             }
         }
         return match self.combinator {
@@ -79,28 +91,33 @@ impl ConstraintTree {
     }
 }
 
-impl From<&str> for StringOrConstraintTree {
-    fn from (s: &str) -> StringOrConstraintTree {
-        StringOrConstraintTree::String(s.to_string())
+impl TryFrom<&str> for VersionSpecOrConstraintTree {
+    type Error = &'static str;
+    fn try_from (input: &str) -> Result<VersionSpecOrConstraintTree, Self::Error> {
+        lazy_static! { static ref REGEX_SPLIT_RE: Regex = Regex::new( r#".*[()|,^$]"# ).unwrap(); }
+        let split_input: Vec<&str> = REGEX_SPLIT_RE.split(input).collect();
+        if split_input.len() > 0 {
+            let tree = treeify(input)?;
+            Ok(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree::try_from(split_input)?))
+        } else {
+            Ok(VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from(input)?))
+        }
     }
 }
 
-impl PartialEq for StringOrConstraintTree {
+impl PartialEq for VersionSpecOrConstraintTree {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (StringOrConstraintTree::String(a), StringOrConstraintTree::String(b)) => a == b,
-            (StringOrConstraintTree::ConstraintTree(a), StringOrConstraintTree::ConstraintTree(b)) => a == b,
+            (VersionSpecOrConstraintTree::VersionSpec(a), VersionSpecOrConstraintTree::VersionSpec(b)) => a == b,
+            (VersionSpecOrConstraintTree::ConstraintTree(a), VersionSpecOrConstraintTree::ConstraintTree(b)) => a == b,
             _ => false
         }
     }
 }
 
-impl fmt::Debug for StringOrConstraintTree {
+impl fmt::Debug for VersionSpecOrConstraintTree {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            StringOrConstraintTree::String(a) => write!(f, "{:#?}", a),
-            StringOrConstraintTree::ConstraintTree(a) => write!(f, "{:#?}", a),
-        }
+        write!(f, "{:#?}", self)
     }
 }
 
@@ -113,18 +130,10 @@ impl PartialEq for ConstraintTree {
     }
 }
 
-impl From<&str> for ConstraintTree {
-    fn from (s: &str) -> ConstraintTree {
-        ConstraintTree {
-            combinator: Combinator::None,
-            parts: vec![Box::new(StringOrConstraintTree::String(s.to_string()))]}
-    }
-}
-
-impl From<StringOrConstraintTree> for ConstraintTree {
-    fn from (scj: StringOrConstraintTree) -> ConstraintTree {
+impl From<VersionSpecOrConstraintTree> for ConstraintTree {
+    fn from (scj: VersionSpecOrConstraintTree) -> ConstraintTree {
         match scj {
-            StringOrConstraintTree::ConstraintTree(_scj) => _scj,
+            VersionSpecOrConstraintTree::ConstraintTree(_scj) => _scj,
             _ => ConstraintTree { combinator: Combinator::None, parts: vec![Box::new(scj)] },
         }
     }
@@ -141,7 +150,7 @@ impl TryFrom<Vec<&str>> for ConstraintTree
         };
         Ok(ConstraintTree {
             combinator,
-            parts: input[1..].iter().map(|x| Box::new(StringOrConstraintTree::String(x.to_string()))).collect()
+            parts: input[1..].iter().map(|x| Box::new(VersionSpecOrConstraintTree::try_from(x))).collect()
         })
     }
 }
@@ -164,7 +173,7 @@ impl fmt::Debug for ConstraintTree {
 /// # Examples
 ///
 /// ```
-/// use ronda::{untreeify, ConstraintTree, StringOrConstraintTree, Combinator};
+/// use ronda::{untreeify, ConstraintTree, VersionSpecOrConstraintTree, Combinator};
 /// use std::convert::{TryInto, TryFrom};
 ///
 /// let cj123_456: ConstraintTree = vec![",", "1.2.3", "4.5.6"].try_into().unwrap();
@@ -175,8 +184,8 @@ impl fmt::Debug for ConstraintTree {
 /// let tree: ConstraintTree = ConstraintTree {
 ///                               combinator: Combinator::Or,
 ///                               parts: vec![
-///                                     Box::new(StringOrConstraintTree::ConstraintTree(cj123_456)),
-///                                     Box::new(StringOrConstraintTree::String("<=7.8.9".to_string()))]};
+///                                     Box::new(VersionSpecOrConstraintTree::ConstraintTree(cj123_456)),
+///                                     Box::new(VersionSpecOrConstraintTree::VersionSpec("<=7.8.9".to_string()))]};
 /// let v = untreeify(&tree);
 /// assert_eq!(v.unwrap(), "(1.2.3,4.5.6)|<=7.8.9".to_string());
 /// ```
@@ -214,19 +223,19 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -
             return Err("can't join single expression".to_string())
         }
         let c: Combinator = stack.pop().unwrap().into();
-        let mut condensed: Vec<Box<StringOrConstraintTree>> = vec![];
+        let mut condensed: Vec<Box<VersionSpecOrConstraintTree>> = vec![];
 
         for _ in 0..2 {
             match output.parts.pop().unwrap().deref() {
-                StringOrConstraintTree::ConstraintTree(a) => {
+                VersionSpecOrConstraintTree::ConstraintTree(a) => {
                     if a.combinator == c {
                         condensed = a.clone().parts.into_iter().chain(condensed.into_iter()).collect();
                     } else {
-                        condensed.insert(0,Box::new(StringOrConstraintTree::ConstraintTree(a.clone())))
+                        condensed.insert(0,Box::new(VersionSpecOrConstraintTree::ConstraintTree(a.clone())))
                     }
                 },
-                StringOrConstraintTree::String(a) => condensed.insert(0,
-                                                                      Box::new(StringOrConstraintTree::String(a.to_string())))
+                VersionSpecOrConstraintTree::VersionSpec(a) => condensed.insert(0,
+                                                                           Box::new(VersionSpecOrConstraintTree::VersionSpec(a)))
             }
         }
 
@@ -236,7 +245,7 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -
         };
 
         if output.parts.len() > 0 {
-            output.parts.push(Box::new(StringOrConstraintTree::ConstraintTree(condensed_output)));
+            output.parts.push(Box::new(VersionSpecOrConstraintTree::ConstraintTree(condensed_output)));
         } else {
             *output = condensed_output;
         }
@@ -246,27 +255,27 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -
 
 /// Examples:
 /// ```
-/// use ronda::{treeify, ConstraintTree, StringOrConstraintTree, Combinator};
+/// use ronda::{treeify, ConstraintTree, VersionSpecOrConstraintTree, Combinator};
 ///
 ///  let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1").unwrap();
 ///  assert_eq!(v, ConstraintTree {
 ///                  combinator: Combinator::Or,
 ///                  parts: vec![
-///      Box::new(StringOrConstraintTree::String("1.5".to_string())),
-///      Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+///      Box::new(VersionSpecOrConstraintTree::VersionSpec("1.5")),
+///      Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
 ///                   combinator: Combinator::And,
 ///                   parts: vec![
-///           Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+///           Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
 ///                       combinator: Combinator::Or,
 ///                       parts: vec![
-///               Box::new(StringOrConstraintTree::String("1.6".to_string())),
-///               Box::new(StringOrConstraintTree::String("1.7".to_string())),
+///               Box::new(VersionSpecOrConstraintTree::VersionSpec("1.6")),
+///               Box::new(VersionSpecOrConstraintTree::VersionSpec("1.7")),
 ///           ]})),
-///           Box::new(StringOrConstraintTree::String("1.8".to_string())),
-///           Box::new(StringOrConstraintTree::String("1.9".to_string())),
+///           Box::new(VersionSpecOrConstraintTree::VersionSpec("1.8")),
+///           Box::new(VersionSpecOrConstraintTree::VersionSpec("1.9")),
 ///      ]})),
-///      Box::new(StringOrConstraintTree::String("2.0".to_string())),
-///      Box::new(StringOrConstraintTree::String("2.1".to_string())),
+///      Box::new(VersionSpecOrConstraintTree::VersionSpec("2.0")),
+///      Box::new(VersionSpecOrConstraintTree::VersionSpec("2.1")),
 ///  ]});
 ///  ```
 pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
@@ -302,9 +311,9 @@ pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
                 if output.combinator != Combinator::None {
                     output = ConstraintTree {
                         combinator: Combinator::None,
-                        parts: vec![Box::new(StringOrConstraintTree::ConstraintTree(output))]};
+                        parts: vec![Box::new(VersionSpecOrConstraintTree::ConstraintTree(output))]};
                 }
-                output.parts.push(Box::new(StringOrConstraintTree::String(item.to_string())))
+                output.parts.push(Box::new(VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from(item)?)))
             }
         }
     }
@@ -318,14 +327,12 @@ pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
 #[derive(Clone)]
 pub(crate) struct VersionSpec {
     spec_str: String,
-    tree: Option<ConstraintTree>,
     matcher: MatchEnum,
     _is_exact: bool
 }
 
 impl Spec for VersionSpec {
-    fn merge(&self, _other: &Self) -> Self { panic!("Not implemented") }
-    fn get_spec(&self) -> &str { &self.spec_str }
+     fn get_spec(&self) -> &str { &self.spec_str }
     fn get_matcher(&self) -> &MatchEnum { &self.matcher }
     fn is_exact(&self) -> bool { self._is_exact }
 }
@@ -334,59 +341,8 @@ impl TryFrom<&str> for VersionSpec {
     type Error = String;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        lazy_static! { static ref REGEX_SPLIT_RE: Regex = Regex::new( r#".*[()|,^$]"# ).unwrap(); }
-        lazy_static! { static ref OPERATOR_START: HashSet<&'static str> = ["=", "<", ">", "!", "~"].iter().cloned().collect(); }
-        let _is_exact = false;
-        let split_input: Vec<&str> = REGEX_SPLIT_RE.split(input).collect();
-        if split_input.len() > 0 {
-            let tree = treeify(input)?;
-            return Ok(tree.into());
-        }
-        let matcher: MatchEnum;
-        let mut _is_exact = false;
-        if input.starts_with("^") || input.ends_with("$") {
-            if ! input.starts_with("^") || ! input.ends_with("$") {
-                return Err(format!("regex specs must start with '^' and end with '$' - spec '{}' is incorrect", input))
-            }
-            matcher = MatchRegex { expression: Regex::new(input).unwrap() }.into();
-            _is_exact = false;
-        } else if OPERATOR_START.contains(&input[..1]) {
-            let (_m, _e) = create_match_enum_from_operator_str(input)?;
-            matcher = _m;
-            _is_exact = _e;
-        } else if input == "*" {
-            matcher = MatchAlways {}.into();
-            _is_exact = false;
-        } else if input.trim_end_matches("*").contains("*") {
-            let rx = input.replace(".", r"\.").replace("+", r"\+").replace("*", r".*");
-            let rx: Regex = Regex::new(&format!(r"^(?:{})$", rx)).unwrap();
-            matcher = MatchRegex { expression: rx }.into();
-            _is_exact = false;
-        } else if input.ends_with("*") {
-            matcher = MatchOperator {
-                operator: CompOp::StartsWith,
-                version: input.trim_end_matches(|c| c=='*' || c=='.').into() }.into();
-            _is_exact = false;
-        } else if ! input.contains("@") {
-            matcher = MatchOperator {operator: CompOp::Eq, version: input.into()}.into();
-            _is_exact = true;
-        } else {
-            matcher = MatchExact { spec: input.to_string() }.into();
-            _is_exact = true;
-        }
-        Ok(VersionSpec { spec_str: input.to_string(), tree: None, matcher, _is_exact })
-    }
-}
-
-impl From<ConstraintTree> for VersionSpec {
-    fn from(tree: ConstraintTree) -> VersionSpec {
-        let matcher = match tree.combinator {
-            Combinator::Or => MatchAny { tree: tree.clone() }.into(),
-            _ => MatchAll { tree: tree.clone() }.into()
-        };
-        let spec_str = untreeify(&tree).unwrap();
-        // ConstraintTree matches are never exact
-        VersionSpec { spec_str, tree: Some(tree), matcher, _is_exact: false }
+        let (matcher, _is_exact) = get_matcher(input)?;
+        Ok(VersionSpec { spec_str: input.to_string(), matcher, _is_exact })
     }
 }
 
@@ -421,8 +377,8 @@ mod tests {
         let v = untreeify(&ConstraintTree {
             combinator: Combinator::And,
             parts: vec![
-                Box::new(StringOrConstraintTree::ConstraintTree(inner_or)),
-                Box::new(StringOrConstraintTree::String("<=7.8.9".to_string())),
+                Box::new(VersionSpecOrConstraintTree::ConstraintTree(inner_or)),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("<=7.8.9".to_string())),
             ]
         }).unwrap();
         assert_eq!(v, "(1.2.3|4.5.6),<=7.8.9");
@@ -434,17 +390,17 @@ mod tests {
         let or_6_7_and_8_9: ConstraintTree = ConstraintTree{
             combinator: Combinator::And,
             parts: vec![
-                Box::new(StringOrConstraintTree::ConstraintTree(or_6_7)),
-                Box::new(StringOrConstraintTree::String("1.8".to_string())),
-                Box::new(StringOrConstraintTree::String("1.9".to_string())),
+                Box::new(VersionSpecOrConstraintTree::ConstraintTree(or_6_7)),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.8".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.9".to_string())),
             ]};
         let or_with_inner_group: ConstraintTree = ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
-                Box::new(StringOrConstraintTree::String("1.5".to_string())),
-                Box::new(StringOrConstraintTree::ConstraintTree(or_6_7_and_8_9)),
-                Box::new(StringOrConstraintTree::String("2.0".to_string())),
-                Box::new(StringOrConstraintTree::String("2.1".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.5".to_string())),
+                Box::new(VersionSpecOrConstraintTree::ConstraintTree(or_6_7_and_8_9)),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.0".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.1".to_string())),
             ]};
         let v = untreeify(&or_with_inner_group).unwrap();
         assert_eq!(v, "1.5|((1.6|1.7),1.8,1.9)|2.0|2.1");
@@ -456,7 +412,7 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::None,
             parts: vec![
-                Box::new(StringOrConstraintTree::String("1.2.3".to_string()))]
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.2.3".to_string()))]
         });
     }
 
@@ -466,8 +422,8 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::And,
             parts: vec![
-                Box::new(StringOrConstraintTree::String("1.2.3".to_string())),
-                Box::new(StringOrConstraintTree::String(">4.5.6".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.2.3".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec(">4.5.6".to_string())),
             ]
         }, "{:#?}", v);
     }
@@ -478,14 +434,14 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
-                Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                     combinator: Combinator::And,
                     parts: vec![
-                        Box::new(StringOrConstraintTree::String("1.2.3".to_string())),
-                        Box::new(StringOrConstraintTree::String("4.5.6".to_string())),
+                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.2.3".to_string())),
+                        Box::new(VersionSpecOrConstraintTree::VersionSpec("4.5.6".to_string())),
                     ]
                 })),
-                Box::new(StringOrConstraintTree::String("<=7.8.9".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("<=7.8.9".to_string())),
             ]
         }, "{:#?}", v);
     }
@@ -496,14 +452,14 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::And,
             parts: vec![
-                Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                     combinator: Combinator::Or,
                     parts: vec![
-                        Box::new(StringOrConstraintTree::String("1.2.3".to_string())),
-                        Box::new(StringOrConstraintTree::String("4.5.6".to_string())),
+                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.2.3".to_string())),
+                        Box::new(VersionSpecOrConstraintTree::VersionSpec("4.5.6".to_string())),
                     ]
                 })),
-                Box::new(StringOrConstraintTree::String("<=7.8.9".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("<=7.8.9".to_string())),
             ]
         }, "{:#?}", v);
     }
@@ -515,21 +471,21 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
-                Box::new(StringOrConstraintTree::String("1.5".to_string())),
-                Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.5".to_string())),
+                Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                     combinator: Combinator::And,
                     parts: vec![
-                        Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                        Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                             combinator: Combinator::Or,
                             parts: vec![
-                                Box::new(StringOrConstraintTree::String("1.6".to_string())),
-                                Box::new(StringOrConstraintTree::String("1.7".to_string())),
+                                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.6".to_string())),
+                                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.7".to_string())),
                             ]})),
-                        Box::new(StringOrConstraintTree::String("1.8".to_string())),
-                        Box::new(StringOrConstraintTree::String("1.9".to_string())),
+                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.8".to_string())),
+                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.9".to_string())),
                     ]})),
-                Box::new(StringOrConstraintTree::String("2.0".to_string())),
-                Box::new(StringOrConstraintTree::String("2.1".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.0".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.1".to_string())),
             ]}, "{:#?}", v);
     }
 
@@ -539,21 +495,21 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
-                Box::new(StringOrConstraintTree::String("1.5".to_string())),
-                Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.5".to_string())),
+                Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                     combinator: Combinator::And,
                     parts: vec![
-                        Box::new(StringOrConstraintTree::ConstraintTree(ConstraintTree {
+                        Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                             combinator: Combinator::Or,
                             parts: vec![
-                                Box::new(StringOrConstraintTree::String("1.6".to_string())),
-                                Box::new(StringOrConstraintTree::String("1.7".to_string())),
+                                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.6".to_string())),
+                                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.7".to_string())),
                             ]})),
-                        Box::new(StringOrConstraintTree::String("1.8".to_string())),
-                        Box::new(StringOrConstraintTree::String("1.9".to_string())),
+                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.8".to_string())),
+                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.9".to_string())),
                     ]})),
-                Box::new(StringOrConstraintTree::String("2.0".to_string())),
-                Box::new(StringOrConstraintTree::String("2.1".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.0".to_string())),
+                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.1".to_string())),
             ]}, "{:#?}", v);
     }
 

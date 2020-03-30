@@ -1,8 +1,9 @@
 use super::spec_trees::*;
 use regex::Regex;
-use std::convert::TryFrom;
 use crate::{Version, CompOp};
-use std::borrow::Borrow;
+use crate::version::errors::VersionParsingError;
+use std::collections::HashSet;
+
 
 pub(crate) fn create_match_enum_from_operator_str(input: &str) -> Result<(MatchEnum, bool), String> {
     lazy_static! { static ref VERSION_RELATION_RE: Regex = Regex::new( r#"^(=|==|!=|<=|>=|<|>|~=)(?![=<>!~])(\S+)$"# ).unwrap(); }
@@ -37,29 +38,52 @@ pub enum MatchEnum {
     MatchNever,
 }
 
-pub trait Spec {
-    // properties in Python
-    fn raw_value(&self) -> &str { self.get_spec() }
-    fn exact_value(&self) -> Option<&str> {
-        if self.is_exact() { Some(self.get_spec()) } else { None } }
-
-    // To be implemented by other things
-    fn merge(&self, other: &Self) -> Self;
-
-    // properties in Python (to be implemented by other things)
-    fn get_spec(&self) -> &str;
-    fn get_matcher(&self) -> &MatchEnum;
-    fn is_exact(&self) -> bool;
-    fn test_match(&self, other: &str) -> bool { self.get_matcher().test(other) }
-}
-
 impl Default for MatchEnum {
     fn default() -> Self { MatchNever{}.into() }
 }
 
+pub fn get_matcher(input: &str) -> Result<(MatchEnum, bool), VersionParsingError> {
+    lazy_static! { static ref REGEX_SPLIT_RE: Regex = Regex::new( r#".*[()|,^$]"# ).unwrap(); }
+    lazy_static! { static ref OPERATOR_START: HashSet<&'static str> = ["=", "<", ">", "!", "~"].iter().cloned().collect(); }
+    let _is_exact = false;
+    let matcher: MatchEnum;
+    let mut _is_exact = false;
+    if input.starts_with("^") || input.ends_with("$") {
+        if ! input.starts_with("^") || ! input.ends_with("$") {
+            return Err(VersionParsingError::Message(format!("regex specs must start with '^' and end with '$' - spec '{}' is incorrect", input)))
+        }
+        matcher = MatchRegex { expression: Regex::new(input).unwrap() }.into();
+        _is_exact = false;
+    } else if OPERATOR_START.contains(&input[..1]) {
+        let (_m, _e) = create_match_enum_from_operator_str(input)?;
+        matcher = _m;
+        _is_exact = _e;
+    } else if input == "*" {
+        matcher = MatchAlways {}.into();
+        _is_exact = false;
+    } else if input.trim_end_matches("*").contains("*") {
+        let rx = input.replace(".", r"\.").replace("+", r"\+").replace("*", r".*");
+        let rx: Regex = Regex::new(&format!(r"^(?:{})$", rx)).unwrap();
+        matcher = MatchRegex { expression: rx }.into();
+        _is_exact = false;
+    } else if input.ends_with("*") {
+        matcher = MatchOperator {
+            operator: CompOp::StartsWith,
+            version: input.trim_end_matches(|c| c=='*' || c=='.').into() }.into();
+        _is_exact = false;
+    } else if ! input.contains("@") {
+        matcher = MatchOperator {operator: CompOp::Eq, version: input.into()}.into();
+        _is_exact = true;
+    } else {
+        matcher = MatchExact { spec: input.to_string() }.into();
+        _is_exact = true;
+    }
+    return Ok((matcher, _is_exact))
+}
+
 #[enum_dispatch(MatchEnum)]
 trait MatchFn {
-    fn test(&self, other: &str) -> bool;
+    fn test(&self, other: &Version) -> bool;
 }
 
 #[derive(Clone)]
@@ -67,11 +91,8 @@ pub struct MatchAny {
     pub tree: ConstraintTree,
 }
 impl MatchFn for MatchAny {
-    fn test(&self, _other: &str) -> bool {
-        // We probably need to convert each individual string of a ConstraintTree into a
-        // MatchOperator, and then have the "other" match with each of those individually.
-        panic!("Not implemented.  Not sure how tuple of VersionSpec matches with ConstraintTree")
-        // self.tree.parts.iter().any(|x| x == other)
+    fn test(&self, other: &Version) -> bool {
+        return self.tree.parts.iter().any(|x| x.test_match(other))
     }
 }
 
@@ -80,15 +101,8 @@ pub struct MatchAll {
     pub tree: ConstraintTree,
 }
 impl MatchFn for MatchAll {
-    fn test(&self, other: &str) -> bool {
-        // We probably need to convert each individual string of a ConstraintTree into a
-        // MatchOperator, and then have the "other" match with each of those individually.
-        return self.tree.parts.iter().all(
-            |x| match x.borrow() {
-                StringOrConstraintTree::String(val) => VersionSpec::try_from(val.borrow() ).unwrap().test_match(other),
-                StringOrConstraintTree::ConstraintTree(val) => val.evaluate(other)
-            }
-        )
+    fn test(&self, other: &Version) -> bool {
+        return self.tree.parts.iter().all(|x| x.test_match(other))
     }
 }
 
@@ -97,7 +111,7 @@ pub struct MatchRegex {
     pub expression: Regex
 }
 impl MatchFn for MatchRegex {
-    fn test(&self, _other: & str) -> bool {
+    fn test(&self, _other: &Version) -> bool {
         panic!("Not implemented")
     }
 }
@@ -108,15 +122,15 @@ pub struct MatchOperator {
     pub version: Version,
 }
 impl MatchFn for MatchOperator {
-    fn test(&self, other: & str) -> bool {
-        self.version.compare_to_str(other, &self.operator)
+    fn test(&self, other: &Version) -> bool {
+        self.version.compare_to_version(other, &self.operator)
     }
 }
 
 #[derive(Clone)]
 pub struct MatchAlways {}
 impl MatchFn for MatchAlways {
-    fn test(&self, _other: & str) -> bool {
+    fn test(&self, _other: &Version) -> bool {
         true
     }
 }
@@ -124,7 +138,7 @@ impl MatchFn for MatchAlways {
 #[derive(Clone)]
 pub struct MatchNever {}
 impl MatchFn for MatchNever {
-    fn test(&self, _other: & str) -> bool {
+    fn test(&self, _other: &Version) -> bool {
         false
     }
 }
@@ -134,8 +148,8 @@ pub struct MatchExact {
     pub spec: String
 }
 impl MatchFn for MatchExact {
-    fn test(&self, other: & str) -> bool {
-        other == self.spec
+    fn test(&self, other: &Version) -> bool {
+        other.version == self.spec
     }
 }
 

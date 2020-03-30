@@ -31,7 +31,7 @@ use super::errors::VersionParsingError;
 /// The struct provides many methods for comparison and probing.
 #[derive(Deserialize,Clone)]
 pub struct Version {
-    version: String,
+    pub(crate) version: String,
     parts: Vec<VersionPart>,
 }
 
