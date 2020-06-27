@@ -9,7 +9,7 @@
 use std::cmp::Ordering;
 
 /// Enum of supported comparison operators.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CompOp {
     /// Equal (`==`, `=`).
     /// When version `A` is equal to `B`.

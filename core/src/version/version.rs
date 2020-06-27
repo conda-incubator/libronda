@@ -29,7 +29,7 @@ use super::errors::VersionParsingError;
 /// representation, the returned value is generated.
 ///
 /// The struct provides many methods for comparison and probing.
-#[derive(Deserialize,Clone)]
+#[derive(Deserialize, Clone)]
 pub struct Version {
     pub(crate) version: String,
     parts: Vec<VersionPart>,
@@ -39,17 +39,6 @@ impl FromStr for Version {
     type Err = VersionParsingError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        /// Create a `Version` instance from a version string.
-        ///
-        /// The version string should be passed to the `version` parameter.  Takes ownership of `version`
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use ronda::{CompOp, Version};
-        ///
-        /// let ver: Version = "1.2.3".parse()?;
-        /// ```
         Version::parse(s, &conda_parser)
     }
 }
@@ -60,12 +49,12 @@ impl From<&str> for Version {
     }
 }
 
-//impl<'a> From<&'a str> for &'a Version {
-//    fn from(s: &str) -> & Version {
-//        let v: Version = Version::parse(s, &conda_parser).unwrap();
-//        &v
-//    }
-//}
+impl<'a> From<&'a str> for &'a Version {
+   fn from(s: &str) -> & Version {
+       let v: Version = Version::parse(s, &conda_parser).unwrap();
+       &v
+   }
+}
 
 // May need clone/copy here
 impl Version {
@@ -82,6 +71,8 @@ impl Version {
     /// use ronda::{CompOp, Version, conda_parser};
     ///
     /// let ver = Version::parse("1.2.3", &conda_parser).unwrap();
+    ///
+    /// assert_eq!(ver.as_str(), "1.2.3");
     /// ```
     pub fn parse(version: &str, parser: &dyn Fn(&str) -> Result<Vec<VersionPart>, VersionParsingError>) -> Result<Self, VersionParsingError> {
         let owned_version = version.to_string();

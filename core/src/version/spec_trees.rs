@@ -3,35 +3,52 @@ use std::fmt;
 use regex::Regex;
 use serde::export::TryFrom;
 
-use crate::version::matching::{MatchEnum, get_matcher};
+use crate::version::matching::{MatchEnum, MatchFn, get_matcher, MatchAny, MatchNever, MatchAll};
 use crate::version::Version;
 use std::borrow::Borrow;
 
-
 #[enum_dispatch]
-pub enum VersionSpecOrConstraintTree {
-    VersionSpec(VersionSpec),
-    ConstraintTree(ConstraintTree), // vec is a mix of &str or other vector(s) of str, possibly nested
-}
-
-#[enum_dispatch(VersionSpecOrConstraintTree)]
-pub trait Spec {
+pub trait Spec<'a> {
     // properties in Python
-    fn raw_value(&self) -> &str { self.get_spec() }
-    fn exact_value(&self) -> Option<&str> {
+    fn raw_value(&self) -> &'a str { self.get_spec() }
+    fn exact_value(&self) -> Option<&'a str> {
         if self.is_exact() { Some(self.get_spec()) } else { None } }
 
     // properties in Python (to be implemented by other things)
-    fn get_spec(&self) -> &str;
-    fn get_matcher(&self) -> &MatchEnum;
+    fn get_spec(&self) -> &'a str;
+    fn get_matcher(&self) -> &'a MatchEnum;
     fn is_exact(&self) -> bool;
     fn test_match(&self, other: &Version) -> bool { self.get_matcher().test(other) }
 }
 
+#[enum_dispatch(Spec)]
 #[derive(Clone)]
-pub struct ConstraintTree {
+pub enum VersionSpecOrConstraintTree<'a> {
+    VersionSpec(VersionSpec<'a>),
+    ConstraintTree(ConstraintTree<'a>), // vec is a mix of &str or other vector(s) of str, possibly nested
+}
+
+#[derive(Clone)]
+pub struct ConstraintTree<'a> {
     pub combinator: Combinator,
-    pub parts: Vec<Box<VersionSpecOrConstraintTree>>,
+    pub parts: Vec<VersionSpecOrConstraintTree<'a>>,
+}
+
+// Not sure tw
+impl <'a> Spec<'a> for ConstraintTree<'a>{
+    fn get_spec(&self) -> &'a str {
+        untreeify(&VersionSpecOrConstraintTree::ConstraintTree(self)).unwrap()
+    }
+    fn get_matcher(&self) -> &'a MatchEnum {
+        match self.combinator {
+            Combinator::And => &MatchAll{tree: self}.into(),
+            Combinator::Or => &MatchAny{tree: self}.into(),
+            Combinator::None => &MatchNever{}.into(),
+        }
+    }
+    fn is_exact(&self) -> bool {
+        return false
+    }
 }
 
 #[derive(PartialEq, Clone)]
@@ -41,12 +58,12 @@ pub enum Combinator {
     None
 }
 
-impl ConstraintTree {
-    fn combine(&self, inand:bool, nested: bool) -> Result<String, String> {
+impl <'a> ConstraintTree<'a> {
+    fn combine(&self, inand:bool, nested: bool) -> Result<&'a str, String> {
         match self.parts.len() {
             1 => {
-                if let VersionSpecOrConstraintTree::VersionSpec(s) = self.parts[0].deref() {
-                    Ok(s.to_string())
+                if let VersionSpecOrConstraintTree::VersionSpec(s) = self.parts[0].borrow() {
+                    Ok(s.get_spec())
                 } else {
                     Err("Can't combine (stringify) single-element ConstraintTree that isn't just a string".to_string())
                 }
@@ -56,56 +73,55 @@ impl ConstraintTree {
                 let mut str_parts = vec![];
 
                 for item in &self.parts {
-                    str_parts.push(match item.deref() {
-                        VersionSpecOrConstraintTree::VersionSpec(s) => s.deref().to_string(),
+                    str_parts.push(match item {
+                        VersionSpecOrConstraintTree::VersionSpec(s) => s.get_spec(),
                         VersionSpecOrConstraintTree::ConstraintTree(cj) => {
-                            cj.combine(self.combinator == Combinator::And, true)?
+                            cj.combine(self.combinator == Combinator::And, true).unwrap()
                         }
                     });
                 }
 
-                let mut res = match self.combinator {
+                let res = match self.combinator {
                     Combinator::And => str_parts.join(","),
                     _ =>  str_parts.join("|")
                 };
                 if inand || nested {
-                    res = format!("({})", res);
+                    let res = format!("({})", res);
                 }
-                Ok(res)
+                Ok(&res)
             }
         }
     }
 
-    pub(crate) fn evaluate(&self, other: &str) -> bool {
-        fn _eval_part(a: &VersionSpecOrConstraintTree, b: &str) -> bool {
+    pub(crate) fn evaluate(&self, other: &'a Version) -> bool {
+        fn _eval_part<'a>(a: &'a VersionSpecOrConstraintTree, b: &'a Version) -> bool {
             return match a {
-                VersionSpecOrConstraintTree::VersionSpec(val) => VersionSpec::try_from(val.borrow()).unwrap().test_match(b),
+                VersionSpecOrConstraintTree::VersionSpec(val) => val.test_match(b),
                 VersionSpecOrConstraintTree::ConstraintTree(val) => val.evaluate(b)
             }
         }
         return match self.combinator {
             Combinator::And => self.parts.iter().all(|x| _eval_part(x.borrow(), other)),
             Combinator::Or => self.parts.iter().any(|x| _eval_part(x.borrow(), other)),
-            _ => panic!()
+            Combinator::None => false,
         }
     }
 }
 
-impl TryFrom<&str> for VersionSpecOrConstraintTree {
+impl <'a>TryFrom<&str> for VersionSpecOrConstraintTree<'a> {
     type Error = &'static str;
-    fn try_from (input: &str) -> Result<VersionSpecOrConstraintTree, Self::Error> {
+    fn try_from (input: &str) -> Result<VersionSpecOrConstraintTree<'a>, Self::Error> {
         lazy_static! { static ref REGEX_SPLIT_RE: Regex = Regex::new( r#".*[()|,^$]"# ).unwrap(); }
         let split_input: Vec<&str> = REGEX_SPLIT_RE.split(input).collect();
         if split_input.len() > 0 {
-            let tree = treeify(input)?;
-            Ok(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree::try_from(split_input)?))
+            Ok(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree::try_from(split_input).unwrap()))
         } else {
-            Ok(VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from(input)?))
+            Ok(VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from(input).unwrap()))
         }
     }
 }
 
-impl PartialEq for VersionSpecOrConstraintTree {
+impl <'a>PartialEq for VersionSpecOrConstraintTree<'a> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (VersionSpecOrConstraintTree::VersionSpec(a), VersionSpecOrConstraintTree::VersionSpec(b)) => a == b,
@@ -115,13 +131,13 @@ impl PartialEq for VersionSpecOrConstraintTree {
     }
 }
 
-impl fmt::Debug for VersionSpecOrConstraintTree {
+impl <'a> fmt::Debug for VersionSpecOrConstraintTree<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:#?}", self)
     }
 }
 
-impl PartialEq for ConstraintTree {
+impl <'a> PartialEq for ConstraintTree<'a> {
     fn eq(&self, other: &Self) -> bool {
         for (a, b) in self.parts.iter().zip(&other.parts) {
             if a.deref() != b.deref() { return false }
@@ -130,16 +146,7 @@ impl PartialEq for ConstraintTree {
     }
 }
 
-impl From<VersionSpecOrConstraintTree> for ConstraintTree {
-    fn from (scj: VersionSpecOrConstraintTree) -> ConstraintTree {
-        match scj {
-            VersionSpecOrConstraintTree::ConstraintTree(_scj) => _scj,
-            _ => ConstraintTree { combinator: Combinator::None, parts: vec![Box::new(scj)] },
-        }
-    }
-}
-
-impl TryFrom<Vec<&str>> for ConstraintTree
+impl <'a>TryFrom<Vec<&str>> for ConstraintTree<'a>
 {
     type Error = &'static str;
     fn try_from(input: Vec<&str>) -> Result<Self, Self::Error> {
@@ -148,16 +155,15 @@ impl TryFrom<Vec<&str>> for ConstraintTree
             "|" => Combinator::Or,
             _ => return Err("Unknown first value in vec of str used as ConstraintTree")
         };
-        Ok(ConstraintTree {
+        let tree = ConstraintTree {
             combinator,
-            parts: input[1..].iter().map(|x| Box::new(VersionSpecOrConstraintTree::try_from(x))).collect()
-        })
+            parts: input[1..].iter().map(|x| VersionSpecOrConstraintTree::try_from(x.borrow()).unwrap()).collect()
+        };
+        Ok(tree)
     }
 }
 
-
-
-impl fmt::Debug for ConstraintTree {
+impl <'a> fmt::Debug for ConstraintTree<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
             write!(f, "{:#?}{:#?}", self.combinator, self.parts)
@@ -179,18 +185,21 @@ impl fmt::Debug for ConstraintTree {
 /// let cj123_456: ConstraintTree = vec![",", "1.2.3", "4.5.6"].try_into().unwrap();
 /// let v = untreeify(&"1.2.3".into());
 /// assert_eq!(v.unwrap(), "1.2.3".to_string());
-/// let v = untreeify(&ConstraintTree::try_from(vec![",", "1.2.3", ">4.5.6"]).unwrap());
+/// let v = untreeify(&ConstraintTree::try_from(vec![",", "1.2.3", ">4.5.6"]).unwrap().into());
 /// assert_eq!(v.unwrap(), "1.2.3,>4.5.6".to_string());
-/// let tree: ConstraintTree = ConstraintTree {
+/// let tree: VersionSpecOrConstraintTree = ConstraintTree {
 ///                               combinator: Combinator::Or,
 ///                               parts: vec![
-///                                     Box::new(VersionSpecOrConstraintTree::ConstraintTree(cj123_456)),
-///                                     Box::new(VersionSpecOrConstraintTree::VersionSpec("<=7.8.9".to_string()))]};
+///                                     VersionSpecOrConstraintTree::ConstraintTree(cj123_456),
+///                                     VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_into("<=7.8.9").unwrap())]}.into();
 /// let v = untreeify(&tree);
 /// assert_eq!(v.unwrap(), "(1.2.3,4.5.6)|<=7.8.9".to_string());
 /// ```
-pub fn untreeify(spec: &ConstraintTree) -> Result<String, String> {
-    spec.combine(false, false)
+pub fn untreeify<'a>(spec: &VersionSpecOrConstraintTree<'a>) -> Result<&'a str, String> {
+    match spec {
+        VersionSpecOrConstraintTree::ConstraintTree(s) => {s.combine(false, false)},
+        VersionSpecOrConstraintTree::VersionSpec(s) => Ok(s.get_spec())
+    }
 }
 
 impl From<&str> for Combinator {
@@ -223,19 +232,19 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -
             return Err("can't join single expression".to_string())
         }
         let c: Combinator = stack.pop().unwrap().into();
-        let mut condensed: Vec<Box<VersionSpecOrConstraintTree>> = vec![];
+        let mut condensed: Vec<VersionSpecOrConstraintTree> = vec![];
 
         for _ in 0..2 {
-            match output.parts.pop().unwrap().deref() {
+            match output.parts.pop().unwrap() {
                 VersionSpecOrConstraintTree::ConstraintTree(a) => {
                     if a.combinator == c {
                         condensed = a.clone().parts.into_iter().chain(condensed.into_iter()).collect();
                     } else {
-                        condensed.insert(0,Box::new(VersionSpecOrConstraintTree::ConstraintTree(a.clone())))
+                        condensed.insert(0,VersionSpecOrConstraintTree::ConstraintTree(a.clone()))
                     }
                 },
                 VersionSpecOrConstraintTree::VersionSpec(a) => condensed.insert(0,
-                                                                           Box::new(VersionSpecOrConstraintTree::VersionSpec(a)))
+                                                                           VersionSpecOrConstraintTree::VersionSpec(a.to_owned()))
             }
         }
 
@@ -245,7 +254,7 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -
         };
 
         if output.parts.len() > 0 {
-            output.parts.push(Box::new(VersionSpecOrConstraintTree::ConstraintTree(condensed_output)));
+            output.parts.push(VersionSpecOrConstraintTree::ConstraintTree(condensed_output));
         } else {
             *output = condensed_output;
         }
@@ -261,21 +270,21 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -
 ///  assert_eq!(v, ConstraintTree {
 ///                  combinator: Combinator::Or,
 ///                  parts: vec![
-///      Box::new(VersionSpecOrConstraintTree::VersionSpec("1.5")),
-///      Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+///      VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.5").unwrap()),
+///      VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
 ///                   combinator: Combinator::And,
 ///                   parts: vec![
-///           Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+///           VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
 ///                       combinator: Combinator::Or,
 ///                       parts: vec![
-///               Box::new(VersionSpecOrConstraintTree::VersionSpec("1.6")),
-///               Box::new(VersionSpecOrConstraintTree::VersionSpec("1.7")),
-///           ]})),
-///           Box::new(VersionSpecOrConstraintTree::VersionSpec("1.8")),
-///           Box::new(VersionSpecOrConstraintTree::VersionSpec("1.9")),
-///      ]})),
-///      Box::new(VersionSpecOrConstraintTree::VersionSpec("2.0")),
-///      Box::new(VersionSpecOrConstraintTree::VersionSpec("2.1")),
+///               VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.6").unwrap()),
+///               VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.7").unwrap()),
+///           ]}),
+///           VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.8").unwrap()),
+///           VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.9").unwrap()),
+///      ]}),
+///      VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.0").unwrap()),
+///      VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.1").unwrap()),
 ///  ]});
 ///  ```
 pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
@@ -311,9 +320,9 @@ pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
                 if output.combinator != Combinator::None {
                     output = ConstraintTree {
                         combinator: Combinator::None,
-                        parts: vec![Box::new(VersionSpecOrConstraintTree::ConstraintTree(output))]};
+                        parts: vec![VersionSpecOrConstraintTree::ConstraintTree(output)]};
                 }
-                output.parts.push(Box::new(VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from(item)?)))
+                output.parts.push(VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from(item).unwrap()))
             }
         }
     }
@@ -325,24 +334,30 @@ pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
 
 
 #[derive(Clone)]
-pub(crate) struct VersionSpec {
-    spec_str: String,
-    matcher: MatchEnum,
+pub(crate) struct VersionSpec<'a> {
+    spec_str: &'a str,
+    matcher: MatchEnum<'a>,
     _is_exact: bool
 }
 
-impl Spec for VersionSpec {
-     fn get_spec(&self) -> &str { &self.spec_str }
-    fn get_matcher(&self) -> &MatchEnum { &self.matcher }
+impl <'a> PartialEq for VersionSpec<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        return self.spec_str == other.spec_str
+    }
+}
+
+impl <'a> Spec<'a> for VersionSpec<'a> {
+    fn get_spec(&self) -> &'a str { self.spec_str }
+    fn get_matcher(&self) -> &'a MatchEnum { &self.matcher }
     fn is_exact(&self) -> bool { self._is_exact }
 }
 
-impl TryFrom<&str> for VersionSpec {
+impl <'a> TryFrom<&'a str> for VersionSpec<'a> {
     type Error = String;
 
-    fn try_from(input: &str) -> Result<Self, Self::Error> {
-        let (matcher, _is_exact) = get_matcher(input)?;
-        Ok(VersionSpec { spec_str: input.to_string(), matcher, _is_exact })
+    fn try_from(input: &'a str) -> Result<Self, Self::Error> {
+        let (matcher, _is_exact) = get_matcher(input).unwrap();
+        Ok(VersionSpec { spec_str: input, matcher, _is_exact })
     }
 }
 
@@ -355,19 +370,22 @@ mod tests {
 
     #[test]
     fn untreeify_single() {
-        let v = untreeify(&"1.2.3".try_into().unwrap()).unwrap();
+        let ct: VersionSpecOrConstraintTree = "1.2.3".try_into().unwrap();
+        let v = untreeify(&ct).unwrap();
         assert_eq!(v, "1.2.3");
     }
 
     #[test]
     fn untreeify_simple_and() {
-        let v = untreeify(&vec![",", "1.2.3", ">4.5.6"].try_into().unwrap()).unwrap();
+        let ct: ConstraintTree = vec![",", "1.2.3", ">4.5.6"].try_into().unwrap();
+        let v = untreeify(&ct.into()).unwrap();
         assert_eq!(v, "1.2.3,>4.5.6");
     }
 
     #[test]
     fn untreeify_simple_or() {
-        let v = untreeify(&vec!["|", "1.2.3", ">4.5.6"].try_into().unwrap()).unwrap();
+        let ct: ConstraintTree = vec!["|", "1.2.3", ">4.5.6"].try_into().unwrap();
+        let v = untreeify(&ct.into()).unwrap();
         assert_eq!(v, "1.2.3|>4.5.6");
     }
 
@@ -377,10 +395,10 @@ mod tests {
         let v = untreeify(&ConstraintTree {
             combinator: Combinator::And,
             parts: vec![
-                Box::new(VersionSpecOrConstraintTree::ConstraintTree(inner_or)),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("<=7.8.9".to_string())),
+                VersionSpecOrConstraintTree::ConstraintTree(inner_or),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("<=7.8.9").unwrap()),
             ]
-        }).unwrap();
+        }.into()).unwrap();
         assert_eq!(v, "(1.2.3|4.5.6),<=7.8.9");
     }
 
@@ -390,19 +408,19 @@ mod tests {
         let or_6_7_and_8_9: ConstraintTree = ConstraintTree{
             combinator: Combinator::And,
             parts: vec![
-                Box::new(VersionSpecOrConstraintTree::ConstraintTree(or_6_7)),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.8".to_string())),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.9".to_string())),
+                VersionSpecOrConstraintTree::ConstraintTree(or_6_7),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.8").unwrap()),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.9").unwrap()),
             ]};
         let or_with_inner_group: ConstraintTree = ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.5".to_string())),
-                Box::new(VersionSpecOrConstraintTree::ConstraintTree(or_6_7_and_8_9)),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.0".to_string())),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.1".to_string())),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.5").unwrap()),
+                VersionSpecOrConstraintTree::ConstraintTree(or_6_7_and_8_9),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.0").unwrap()),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.1").unwrap()),
             ]};
-        let v = untreeify(&or_with_inner_group).unwrap();
+        let v = untreeify(&or_with_inner_group.into()).unwrap();
         assert_eq!(v, "1.5|((1.6|1.7),1.8,1.9)|2.0|2.1");
     }
 
@@ -412,7 +430,8 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::None,
             parts: vec![
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.2.3".to_string()))]
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.2.3").unwrap()),
+            ]
         });
     }
 
@@ -422,8 +441,8 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::And,
             parts: vec![
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.2.3".to_string())),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec(">4.5.6".to_string())),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.2.3").unwrap()),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from(">4.5.6").unwrap()),
             ]
         }, "{:#?}", v);
     }
@@ -434,14 +453,14 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
-                Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+                VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                     combinator: Combinator::And,
                     parts: vec![
-                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.2.3".to_string())),
-                        Box::new(VersionSpecOrConstraintTree::VersionSpec("4.5.6".to_string())),
+                        VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.2.3").unwrap()),
+                        VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("4.5.6").unwrap()),
                     ]
-                })),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("<=7.8.9".to_string())),
+                }),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("<=7.8.9").unwrap()),
             ]
         }, "{:#?}", v);
     }
@@ -452,14 +471,14 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::And,
             parts: vec![
-                Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+                VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                     combinator: Combinator::Or,
                     parts: vec![
-                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.2.3".to_string())),
-                        Box::new(VersionSpecOrConstraintTree::VersionSpec("4.5.6".to_string())),
+                        VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.2.3").unwrap()),
+                        VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("4.5.6").unwrap()),
                     ]
-                })),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("<=7.8.9".to_string())),
+                }),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("<=7.8.9").unwrap()),
             ]
         }, "{:#?}", v);
     }
@@ -471,21 +490,21 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.5".to_string())),
-                Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.5").unwrap()),
+                VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                     combinator: Combinator::And,
                     parts: vec![
-                        Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+                        VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                             combinator: Combinator::Or,
                             parts: vec![
-                                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.6".to_string())),
-                                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.7".to_string())),
-                            ]})),
-                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.8".to_string())),
-                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.9".to_string())),
-                    ]})),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.0".to_string())),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.1".to_string())),
+                                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.6").unwrap()),
+                                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.7").unwrap()),
+                            ]}),
+                        VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.8").unwrap()),
+                        VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.9").unwrap()),
+                    ]}),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.0").unwrap()),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.1").unwrap()),
             ]}, "{:#?}", v);
     }
 
@@ -495,57 +514,57 @@ mod tests {
         assert_eq!(v, ConstraintTree {
             combinator: Combinator::Or,
             parts: vec![
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.5".to_string())),
-                Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.5").unwrap()),
+                VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                     combinator: Combinator::And,
                     parts: vec![
-                        Box::new(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+                        VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
                             combinator: Combinator::Or,
                             parts: vec![
-                                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.6".to_string())),
-                                Box::new(VersionSpecOrConstraintTree::VersionSpec("1.7".to_string())),
-                            ]})),
-                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.8".to_string())),
-                        Box::new(VersionSpecOrConstraintTree::VersionSpec("1.9".to_string())),
-                    ]})),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.0".to_string())),
-                Box::new(VersionSpecOrConstraintTree::VersionSpec("2.1".to_string())),
+                                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.6").unwrap()),
+                                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.7").unwrap()),
+                            ]}),
+                        VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.8").unwrap()),
+                        VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.9").unwrap()),
+                    ]}),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.0").unwrap()),
+                VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.1").unwrap()),
             ]}, "{:#?}", v);
     }
 
     #[test]
     fn test_ver_eval() {
-        assert_eq!(VersionSpec::try_from("==1.7").unwrap().test_match("1.7.0"), true);
-        assert_eq!(VersionSpec::try_from("<=1.7").unwrap().test_match("1.7.0"), true);
-        assert_eq!(VersionSpec::try_from("<1.7").unwrap().test_match("1.7.0"), false);
-        assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.7.0"), true);
-        assert_eq!(VersionSpec::try_from(">1.7").unwrap().test_match("1.7.0"), false);
-        assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.6.7"), false);
-        assert_eq!(VersionSpec::try_from("2013a").unwrap().test_match(">2013b"), false);
-        assert_eq!(VersionSpec::try_from("2013k").unwrap().test_match(">2013b"), true);
-        assert_eq!(VersionSpec::try_from("3.0.0").unwrap().test_match(">2013b"), false);
-        assert_eq!(VersionSpec::try_from("1.0.0").unwrap().test_match(">1.0.0a"), true);
-        assert_eq!(VersionSpec::try_from("1.0.0").unwrap().test_match(">1.0.0*"), true);
-        assert_eq!(VersionSpec::try_from("1.0").unwrap().test_match("1.0*"), true);
-        assert_eq!(VersionSpec::try_from("1.0.0").unwrap().test_match("1.0*"), true);
-        assert_eq!(VersionSpec::try_from("1.0").unwrap().test_match("1.0.0*"), true);
-        assert_eq!(VersionSpec::try_from("1.0.1").unwrap().test_match("1.0.0*"), false);
-        assert_eq!(VersionSpec::try_from("2013a").unwrap().test_match("2013a*"), true);
-        assert_eq!(VersionSpec::try_from("2013a").unwrap().test_match("2013b*"), false);
-        assert_eq!(VersionSpec::try_from("2013ab").unwrap().test_match("2013a*"), true);
-        assert_eq!(VersionSpec::try_from("1.3.4").unwrap().test_match("1.2.4*"), false);
-        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.3*"), true);
-        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.3+4*"), true);
-        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.3+5*"), false);
-        assert_eq!(VersionSpec::try_from("1.2.3+4.5.6").unwrap().test_match("1.2.4+5*"), false);
+        assert_eq!(VersionSpec::try_from("==1.7").unwrap().test_match("1.7.0".into()), true);
+        assert_eq!(VersionSpec::try_from("<=1.7").unwrap().test_match("1.7.0".into()), true);
+        assert_eq!(VersionSpec::try_from("<1.7").unwrap().test_match("1.7.0".into()), false);
+        assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.7.0".into()), true);
+        assert_eq!(VersionSpec::try_from(">1.7").unwrap().test_match("1.7.0".into()), false);
+        assert_eq!(VersionSpec::try_from(">=1.7").unwrap().test_match("1.6.7".into()), false);
+        assert_eq!(VersionSpec::try_from(">2013b").unwrap().test_match("2013a".into()), false);
+        assert_eq!(VersionSpec::try_from(">2013b").unwrap().test_match("2013k".into()), true);
+        assert_eq!(VersionSpec::try_from(">2013b").unwrap().test_match("3.0.0".into()), false);
+        assert_eq!(VersionSpec::try_from(">1.0.0a").unwrap().test_match("1.0.0".into()), true);
+        assert_eq!(VersionSpec::try_from(">1.0.0*").unwrap().test_match("1.0.0".into()), true);
+        assert_eq!(VersionSpec::try_from("1.0*").unwrap().test_match("1.0".into()), true);
+        assert_eq!(VersionSpec::try_from("1.0*").unwrap().test_match("1.0.0".into()), true);
+        assert_eq!(VersionSpec::try_from("1.0.0*").unwrap().test_match("1.0".into()), true);
+        assert_eq!(VersionSpec::try_from("1.0.0*").unwrap().test_match("1.0.1".into()), false);
+        assert_eq!(VersionSpec::try_from("2013a*").unwrap().test_match("2013a".into()), true);
+        assert_eq!(VersionSpec::try_from("2013b*").unwrap().test_match("2013a".into()), false);
+        assert_eq!(VersionSpec::try_from("2013a*").unwrap().test_match("2013ab".into()), true);
+        assert_eq!(VersionSpec::try_from("1.2.4*").unwrap().test_match("1.3.4".into()), false);
+        assert_eq!(VersionSpec::try_from("1.2.3*").unwrap().test_match("1.2.3+4.5.6".into()), true);
+        assert_eq!(VersionSpec::try_from("1.2.3+4*").unwrap().test_match("1.2.3+4.5.6".into()), true);
+        assert_eq!(VersionSpec::try_from("1.2.3+5*").unwrap().test_match("1.2.3+4.5.6".into()), false);
+        assert_eq!(VersionSpec::try_from("1.2.4+5*").unwrap().test_match("1.2.3+4.5.6".into()), false);
     }
 
     #[test]
     fn test_ver_eval_errors() {
         // each of these should raise
-        VersionSpec::try_from("3.0.0").unwrap().test_match("><2.4.5");
-        VersionSpec::try_from("3.0.0").unwrap().test_match("!!2.4.5");
-        VersionSpec::try_from("3.0.0").unwrap().test_match("!");
+        VersionSpec::try_from("><2.4.5");
+        VersionSpec::try_from("!!2.4.5");
+        VersionSpec::try_from("!");
     }
 
     #[test]
@@ -658,7 +677,7 @@ mod tests {
         //assert VersionSpec(m) is m
         //assert str(m) == vspec
         //assert repr(m) == "VersionSpec('%s')" % vspec
-        assert_eq!(m.test_match("1.7.1"), res);
+        assert_eq!(m.test_match("1.7.1".into()), res);
     }
 
     #[rstest(vspec,
@@ -667,45 +686,45 @@ mod tests {
     case("1.7.0.post123.gabcdef9"),
     case("1.7.0.post123 + gabcdef9")
     )]
-    fn test_local_identifier(vspec: &str) {
+    fn test_local_identifier(vspec: &'static str) {
         //"""The separator for the local identifier should be either `.` or `+`"""
         // a valid versionstr should match itself
         let m = VersionSpec::try_from(vspec).unwrap();
-        assert!(m.test_match (vspec))
+        assert!(m.test_match (vspec.into()))
     }
 
     #[test]
     fn test_not_eq_star() {
-        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.3.1"), true);
-        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.3"), true);
-        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.4"), false);
+        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.3.1".into()), true);
+        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.3".into()), true);
+        assert_eq!(VersionSpec::try_from("=3.3").unwrap().test_match("3.4".into()), false);
 
-        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.3.1"), true);
-        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.3"), true);
-        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.4"), false);
+        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.3.1".into()), true);
+        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.3".into()), true);
+        assert_eq!(VersionSpec::try_from("3.3.*").unwrap().test_match("3.4".into()), false);
 
-        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.3.1"), true);
-        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.3"), true);
-        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.4"), false);
+        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.3.1".into()), true);
+        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.3".into()), true);
+        assert_eq!(VersionSpec::try_from("=3.3.*").unwrap().test_match("3.4".into()), false);
 
-        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.3.1"), false);
-        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.4"), true);
-        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.4.1"), true);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.3.1".into()), false);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.4".into()), true);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.4.1".into()), true);
 
-        assert_eq!(VersionSpec::try_from("!=3.3").unwrap().test_match("3.3.1"), true);
-        assert_eq!(VersionSpec::try_from("!=3.3").unwrap().test_match("3.3.0.0"), false);
-        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.3.0.0"), false);
+        assert_eq!(VersionSpec::try_from("!=3.3").unwrap().test_match("3.3.1".into()), true);
+        assert_eq!(VersionSpec::try_from("!=3.3").unwrap().test_match("3.3.0.0".into()), false);
+        assert_eq!(VersionSpec::try_from("!=3.3.*").unwrap().test_match("3.3.0.0".into()), false);
     }
 
     #[test]
     fn test_compound_versions() {
         let vs = VersionSpec::try_from(">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*").unwrap();
-        assert_eq!(vs.test_match("2.6.8"), false);
-        assert!(vs.test_match("2.7.2"));
-        assert_eq!(vs.test_match("3.3"), false);
-        assert_eq!(vs.test_match("3.3.4"), false);
-        assert!(vs.test_match("3.4"));
-        assert!(vs.test_match("3.4a"));
+        assert_eq!(vs.test_match("2.6.8".into()), false);
+        assert!(vs.test_match("2.7.2".into()));
+        assert_eq!(vs.test_match("3.3".into()), false);
+        assert_eq!(vs.test_match("3.3.4".into()), false);
+        assert!(vs.test_match("3.4".into()));
+        assert!(vs.test_match("3.4a".into()));
     }
 
     #[test]
@@ -722,17 +741,17 @@ mod tests {
 
     #[test]
     fn test_compatible_release_versions() {
-        assert_eq!(VersionSpec::try_from("~=1.10").unwrap().test_match("1.11.0"), true);
-        assert_eq!(VersionSpec::try_from("~=1.10.0").unwrap().test_match("1.11.0"), false);
+        assert_eq!(VersionSpec::try_from("~=1.10").unwrap().test_match("1.11.0".into()), true);
+        assert_eq!(VersionSpec::try_from("~=1.10.0").unwrap().test_match("1.11.0".into()), false);
 
-        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.4.0"), false);
-        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.1"), false);
-        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.2.0"), true);
-        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.3"), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.4.0".into()), false);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.1".into()), false);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.2.0".into()), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2").unwrap().test_match("3.3.3".into()), true);
 
-        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("2.2.0"), true);
-        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("3.3.3"), true);
-        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("2.2.1"), false);
+        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("2.2.0".into()), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("3.3.3".into()), true);
+        assert_eq!(VersionSpec::try_from("~=3.3.2|==2.2").unwrap().test_match("2.2.1".into()), false);
 
         match VersionSpec::try_from("~=3.3.2.*") {
             Ok(_) => panic!(),
