@@ -49,13 +49,6 @@ impl From<&str> for Version {
     }
 }
 
-impl<'a> From<&'a str> for &'a Version {
-   fn from(s: &str) -> & Version {
-       let v: Version = Version::parse(s, &conda_parser).unwrap();
-       &v
-   }
-}
-
 // May need clone/copy here
 impl Version {
     /// Create a `Version` instance from a version string with the given `parser` function.

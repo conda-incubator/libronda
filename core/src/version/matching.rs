@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 
 pub(crate) fn create_match_enum_from_operator_str(input: &str) -> Result<(MatchEnum, bool), String> {
-    lazy_static! { static ref VERSION_RELATION_RE: Regex = Regex::new( r#"^(=|==|!=|<=|>=|<|>|~=)(?![=<>!~])(\S+)$"# ).unwrap(); }
+    lazy_static! { static ref VERSION_RELATION_RE: Regex = Regex::new( r#"^(=|==|!=|<=|>=|<|>|~=)(\S+)$"# ).unwrap(); }
 
     let (mut operator_str, mut v_str) = match VERSION_RELATION_RE.captures(input) {
         None => return Err(format!("invalid operator in string {}", input)),
@@ -27,23 +27,21 @@ pub(crate) fn create_match_enum_from_operator_str(input: &str) -> Result<(MatchE
 }
 
 #[enum_dispatch]
-pub trait MatchFn<'a> {
-    fn test(&self, other: &'a Version) -> bool;
+pub trait MatchFn {
+    fn test(&self, other: &Version) -> bool;
 }
 
 #[enum_dispatch(MatchFn)]
-#[derive(Clone, Copy)]
-pub enum MatchEnum<'a> {
-    MatchAny(MatchAny<'a>),
-    MatchAll(MatchAll<'a>),
-    MatchRegex(MatchRegex<'a>),
-    MatchOperator(MatchOperator<'a>),
+#[derive(Clone)]
+pub enum MatchEnum {
+    MatchRegex(MatchRegex),
+    MatchOperator(MatchOperator),
     MatchAlways,
-    MatchExact(MatchExact<'a>),
+    MatchExact(MatchExact),
     MatchNever,
 }
 
-impl <'a> Default for MatchEnum<'a> {
+impl Default for MatchEnum {
     fn default() -> Self { MatchNever{}.into() }
 }
 
@@ -58,7 +56,7 @@ pub fn get_matcher(input: &str) -> Result<(MatchEnum, bool), VersionParsingError
             return Err(VersionParsingError::Message(format!("regex specs must start with '^' and end with '$' - spec '{}' is incorrect", input)))
         }
         let re =  Regex::new(input).unwrap();
-        matcher = MatchRegex { expression: &re }.into();
+        matcher = MatchRegex { expression: re }.into();
         _is_exact = false;
     } else if OPERATOR_START.contains(&input[..1]) {
         let (_m, _e) = create_match_enum_from_operator_str(input).unwrap();
@@ -70,7 +68,7 @@ pub fn get_matcher(input: &str) -> Result<(MatchEnum, bool), VersionParsingError
     } else if input.trim_end_matches("*").contains("*") {
         let rx = input.replace(".", r"\.").replace("+", r"\+").replace("*", r".*");
         let rx: Regex = Regex::new(&format!(r"^(?:{})$", rx)).unwrap();
-        matcher = MatchRegex { expression: &rx }.into();
+        matcher = MatchRegex { expression: rx }.into();
         _is_exact = false;
     } else if input.ends_with("*") {
         matcher = MatchOperator {
@@ -81,56 +79,37 @@ pub fn get_matcher(input: &str) -> Result<(MatchEnum, bool), VersionParsingError
         matcher = MatchOperator {operator: CompOp::Eq, version: input.into()}.into();
         _is_exact = true;
     } else {
-        matcher = MatchExact { spec: input }.into();
+        matcher = MatchExact { spec: input.to_string() }.into();
         _is_exact = true;
     }
     return Ok((matcher, _is_exact))
 }
 
-#[derive(Clone, Copy)]
-pub struct MatchAny<'a> {
-    pub tree: &'a ConstraintTree<'a>,
+#[derive(Clone)]
+pub struct MatchRegex {
+    pub expression: Regex
 }
-impl <'a> MatchFn<'a> for MatchAny<'a> {
-    fn test(&self, other: &'a Version) -> bool {
-        return self.tree.parts.iter().any(|x| x.test_match(other))
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct MatchAll<'a> {
-    pub tree: &'a ConstraintTree<'a>,
-}
-impl <'a> MatchFn<'a> for MatchAll<'a> {
-    fn test(&self, other: &'a Version) -> bool {
-        return self.tree.parts.iter().all(|x| x.test_match(other))
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct MatchRegex<'a> {
-    pub expression: &'a Regex
-}
-impl <'a> MatchFn<'a> for MatchRegex<'a> {
-    fn test(&self, _other: &'a Version) -> bool {
+impl MatchFn for MatchRegex {
+    fn test(&self, _other: &Version) -> bool {
         panic!("Not implemented")
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct MatchOperator<'a> {
+#[derive(Clone)]
+pub struct MatchOperator {
     pub operator: CompOp,
-    pub version: &'a Version,
+    // TODO: may want a reference here, but that means cascading lifetime handling
+    pub version: Version,
 }
-impl <'a> MatchFn<'a> for MatchOperator<'a> {
-    fn test(&self, other: &'a Version) -> bool {
+impl MatchFn for MatchOperator {
+    fn test(&self, other: &Version) -> bool {
         self.version.compare_to_version(other, &self.operator)
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct MatchAlways {}
-impl <'a> MatchFn<'a> for MatchAlways {
+impl MatchFn for MatchAlways {
     fn test(&self, _other: &Version) -> bool {
         true
     }
@@ -138,17 +117,17 @@ impl <'a> MatchFn<'a> for MatchAlways {
 
 #[derive(Clone, Copy)]
 pub struct MatchNever {}
-impl <'a> MatchFn<'a> for MatchNever {
+impl MatchFn for MatchNever {
     fn test(&self, _other: &Version) -> bool {
         false
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct MatchExact<'a> {
-    pub spec: &'a str
+#[derive(Clone)]
+pub struct MatchExact {
+    pub spec: String
 }
-impl <'a> MatchFn<'a> for MatchExact<'a> {
+impl MatchFn for MatchExact {
     fn test(&self, other: &Version) -> bool {
         other.version == self.spec
     }
@@ -316,10 +295,10 @@ mod tests {
         case("1.7.0.post123.gabcdef9"),
         case("1.7.0.post123 + gabcdef9")
     )]
-    fn test_local_identifier <'a> (vspec: &'a str) {
+    fn test_local_identifier (vspec: &str) {
         //"""The separator for the local identifier should be either `.` or `+`"""
         // a valid versionstr should match itself
-        let m: VersionSpecOrConstraintTree<'a> = VersionSpec::try_from(vspec).unwrap().into();
+        let m: VersionSpecOrConstraintTree = VersionSpec::try_from(vspec).unwrap().into();
         assert!(m.test_match(vspec.into()))
     }
 
