@@ -125,3 +125,80 @@ macro_rules! parametrize_versions_set {
 //        }
 //    }
 //}
+
+macro_rules! parametrize_match_evaluation {
+    ( $test:ident ) => {
+        paste::item! {
+            #[rstest(a, b, result,
+             case::equals("==1.7", "1.7.0", true),
+             case::less_than_equal("<=1.7", "1.7.0", true),
+             case::less("<1.7", "1.7.0", false),
+             case::geq(">=1.7", "1.7.0", true),
+             case::gt(">1.7", "1.7.0", false),
+             case::geq2(">=1.7", "1.6.7", false),
+             case::greater_alpha("2013a", ">2013b", false),
+             case::inverse_greater_alpha("2013k", ">2013b", true),
+             case::gt2("3.0.0", ">2013b", false),
+             case::release_greater_than_alpha("1.0.0", ">1.0.0a", true),
+             case::release_greater_than_star("1.0.0", ">1.0.0*", true),
+             case::star("1.0", "1.0*", true),
+             case::star_with_more_precision("1.0.0", "1.0*", true),
+             case::star_with_less_precision("1.0", "1.0.0*", true),
+             case::star_nomatch("1.0.1", "1.0.0*", false),
+             case::star_match_alpha("2013a", "2013a*", true),
+             case::star_mismatch_same_precision("2013a", "2013b*", false),
+             case::star_match_alpha_sub("2013ab", "2013a*", true),
+             case::crazy_mismatch("1.3.4", "1.2.4*", false),
+             case::star_post("1.2.3+4.5.6", "1.2.3*", true),
+             case::star_post_one_place("1.2.3+4.5.6", "1.2.3+4*", true),
+             case::star_post_one_place_mismatch("1.2.3+4.5.6", "1.2.3+5*", false),
+             case::star_post_minor_mismatch_before_post("1.2.3+4.5.6", "1.2.4+4*", false),
+             // star_no_match
+             case("=3.3", "3.3.1", true),
+             case("=3.3", "3.3", true),
+             case("=3.3", "3.4", false),
+             case("3.3.*", "3.3.1", true),
+             case("3.3.*", "3.3", true),
+             case("3.3.*", "3.4", false),
+             case("=3.3.*", "3.3.1", true),
+             case("=3.3.*", "3.3", true),
+             case("=3.3.*", "3.4", false),
+             case("!=3.3.*", "3.3.1", false),
+             case("!=3.3.*", "3.4", true),
+             case("!=3.3.*", "3.4.1", true),
+             case("!=3.3", "3.3.1", true),
+             case("!=3.3", "3.3.0.0", false),
+             case("!=3.3.*", "3.3.0.0", false),
+             // test_compatible_release_versions
+             case("~=1.10", "1.11.0", true),
+             case("~=1.10.0", "1.11.0", false),
+             case("~=3.3.2", "3.4.0", false),
+             case("~=3.3.2", "3.3.1", false),
+             case("~=3.3.2", "3.3.2.0", true),
+             case("~=3.3.2", "3.3.3", true),
+             case("~=3.3.2|==2.2", "2.2.0", true),
+             case("~=3.3.2|==2.2", "3.3.3", true),
+             case("~=3.3.2|==2.2", "2.2.1", false),
+
+            )]
+            #[allow(non_snake_case)]
+            fn [< _ $test>] (a: &str, b: &str, result: bool) {
+                $test(a, b, result)
+            }
+        }
+    }
+}
+
+macro_rules! parametrize_not_eq_star {
+    ( $test:ident ) => {
+        paste::item! {
+            #[rstest(a, b, result,
+
+)]
+#[allow(non_snake_case)]
+fn [< _ $test>] (a: &str, b: &str, result: bool) {
+$test(a, b, result)
+}
+}
+}
+}

@@ -6,6 +6,7 @@ use serde::export::TryFrom;
 use crate::version::matching::{MatchEnum, MatchFn, get_matcher};
 use crate::version::Version;
 use std::borrow::Borrow;
+use crate::version::errors::VersionParsingError;
 
 #[enum_dispatch]
 pub trait Spec {
@@ -351,11 +352,14 @@ impl Spec for VersionSpec {
 }
 
 impl TryFrom<&str> for VersionSpec {
-    type Error = String;
+    type Error = VersionParsingError;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        let (matcher, _is_exact) = get_matcher(input).unwrap();
-        Ok(VersionSpec { spec_str: input.to_owned(), matcher, _is_exact })
+        let res = get_matcher(input);
+        match res {
+            Ok((matcher, _is_exact)) => Ok(VersionSpec { spec_str: input.to_owned(), matcher, _is_exact }),
+            Err(e) => Err(e)
+        }
     }
 }
 
