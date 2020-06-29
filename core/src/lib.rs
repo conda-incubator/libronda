@@ -9,6 +9,7 @@
 
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate enum_dispatch;
+
 #[cfg(test)]
 #[macro_use] extern crate rstest;
 

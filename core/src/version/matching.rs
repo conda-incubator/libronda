@@ -1,4 +1,3 @@
-use super::spec_trees::*;
 use regex::Regex;
 use crate::{Version, CompOp};
 use crate::version::errors::VersionParsingError;
@@ -143,8 +142,11 @@ impl MatchFn for MatchExact {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use rstest::rstest;
     use std::convert::TryFrom;
+    use crate::VersionSpecOrConstraintTree;
+    use crate::version::spec_trees::{Spec, VersionSpec, ConstraintTree};
 
     fn test_ver_eval(a: &str, b: &str, result: bool) {
         assert_eq!(VersionSpec::try_from(a).unwrap().test_match(b), result);
@@ -287,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_compound_versions() {
-        let vs = VersionSpec::try_from(">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*").unwrap();
+        let vs = VersionSpecOrConstraintTree::try_from(">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*").unwrap();
         assert_eq!(vs.test_match("2.6.8"), false);
         assert!(vs.test_match("2.7.2"));
         assert_eq!(vs.test_match("3.3"), false);

@@ -1,11 +1,12 @@
 use std::ops::Deref;
 use std::fmt;
 use regex::Regex;
+use std::borrow::Borrow;
+
 use serde::export::TryFrom;
 
 use crate::version::matching::{MatchEnum, MatchFn, get_matcher};
 use crate::version::Version;
-use std::borrow::Borrow;
 use crate::version::errors::VersionParsingError;
 
 #[enum_dispatch]
@@ -66,7 +67,7 @@ pub enum Combinator {
 }
 
 impl ConstraintTree {
-    fn combine(&self, inand:bool, nested: bool) -> Result<String, String> {
+    fn combine(&self, inand: bool, nested: bool) -> Result<String, String> {
         match self.parts.len() {
             1 => {
                 if let VersionSpecOrConstraintTree::VersionSpec(s) = self.parts[0].borrow() {
@@ -88,12 +89,12 @@ impl ConstraintTree {
                     });
                 }
 
-                let res = match self.combinator {
+                let mut res = match self.combinator {
                     Combinator::And => str_parts.join(","),
-                    _ =>  str_parts.join("|")
+                    _ => str_parts.join("|")
                 };
                 if inand || nested {
-                    let res = format!("({})", res);
+                    res = format!("({})", res);
                 }
                 Ok(res)
             }
@@ -102,14 +103,20 @@ impl ConstraintTree {
 }
 
 impl TryFrom<&str> for VersionSpecOrConstraintTree {
-    type Error = &'static str;
+    type Error = VersionParsingError;
     fn try_from (input: &str) -> Result<VersionSpecOrConstraintTree, Self::Error> {
         lazy_static! { static ref REGEX_SPLIT_RE: Regex = Regex::new( r#".*[()|,^$]"# ).unwrap(); }
         let split_input: Vec<&str> = REGEX_SPLIT_RE.split(input).collect();
-        if split_input.len() > 0 {
-            Ok(VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree::try_from(split_input).unwrap()))
+        if split_input.len() > 1 {
+            match ConstraintTree::try_from(split_input) {
+                Ok(v) => Ok(VersionSpecOrConstraintTree::ConstraintTree(v)),
+                Err(e) => Err(e)
+            }
         } else {
-            Ok(VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from(input).unwrap()))
+            match VersionSpec::try_from(input) {
+                Ok(v) => Ok(VersionSpecOrConstraintTree::VersionSpec(v)),
+                Err(e) => Err(e)
+            }
         }
     }
 }
@@ -141,16 +148,16 @@ impl PartialEq for ConstraintTree {
 
 impl TryFrom<Vec<&str>> for ConstraintTree
 {
-    type Error = &'static str;
+    type Error = VersionParsingError;
     fn try_from(input: Vec<&str>) -> Result<Self, Self::Error> {
-        let combinator = match input[0]{
+        let combinator = match input[0].borrow() {
             "," => Combinator::And,
             "|" => Combinator::Or,
-            _ => return Err("Unknown first value in vec of str used as ConstraintTree")
+            _ => return Err(VersionParsingError::Message(format!("Unknown first value in vec of str used as ConstraintTree")))
         };
         let tree = ConstraintTree {
             combinator,
-            parts: input[1..].iter().map(|x| VersionSpecOrConstraintTree::try_from(x.borrow()).unwrap()).collect()
+            parts: input[1..].iter().map(|x| VersionSpecOrConstraintTree::try_from(x.clone()).unwrap()).collect()
         };
         Ok(tree)
     }
@@ -172,7 +179,7 @@ impl fmt::Debug for ConstraintTree {
 /// # Examples
 ///
 /// ```
-/// use ronda::{untreeify, ConstraintTree, VersionSpecOrConstraintTree, Combinator};
+/// use ronda::{untreeify, ConstraintTree, VersionSpec, VersionSpecOrConstraintTree, Combinator};
 /// use std::convert::{TryInto, TryFrom};
 ///
 /// let cj123_456: ConstraintTree = vec![",", "1.2.3", "4.5.6"].try_into().unwrap();
@@ -255,32 +262,7 @@ fn _apply_ops(cstop: &str, output: &mut ConstraintTree, stack: &mut Vec<&str>) -
     return Ok(())
 }
 
-/// Examples:
-/// ```
-/// use ronda::{treeify, ConstraintTree, VersionSpecOrConstraintTree, Combinator};
-///
-///  let v = treeify("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1").unwrap();
-///  assert_eq!(v, ConstraintTree {
-///                  combinator: Combinator::Or,
-///                  parts: vec![
-///      VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.5").unwrap()),
-///      VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
-///                   combinator: Combinator::And,
-///                   parts: vec![
-///           VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
-///                       combinator: Combinator::Or,
-///                       parts: vec![
-///               VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.6").unwrap()),
-///               VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.7").unwrap()),
-///           ]}),
-///           VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.8").unwrap()),
-///           VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.9").unwrap()),
-///      ]}),
-///      VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.0").unwrap()),
-///      VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.1").unwrap()),
-///  ]});
-///  ```
-pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
+fn _treeify(spec_str: String) -> Result<ConstraintTree, String> {
     lazy_static! { static ref VSPEC_TOKENS: Regex = Regex::new(
         r#"\s*\^[^$]*[$]|\s*[()|,]|\s*[^()|,]+"#
     ).unwrap(); }
@@ -324,7 +306,34 @@ pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
     Ok(output)
 }
 
-
+/// Examples:
+/// ```
+/// use ronda::{treeify, ConstraintTree, VersionSpec, VersionSpecOrConstraintTree, Combinator};
+///
+///  let v = treeify(String::from("((1.5|((1.6|1.7), 1.8), 1.9 |2.0))|2.1").unwrap();
+///  assert_eq!(v, ConstraintTree {
+///                  combinator: Combinator::Or,
+///                  parts: vec![
+///      VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.5").unwrap()),
+///      VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+///                   combinator: Combinator::And,
+///                   parts: vec![
+///           VersionSpecOrConstraintTree::ConstraintTree(ConstraintTree {
+///                       combinator: Combinator::Or,
+///                       parts: vec![
+///               VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.6").unwrap()),
+///               VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.7").unwrap()),
+///           ]}),
+///           VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.8").unwrap()),
+///           VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("1.9").unwrap()),
+///      ]}),
+///      VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.0").unwrap()),
+///      VersionSpecOrConstraintTree::VersionSpec(VersionSpec::try_from("2.1").unwrap()),
+///  ]});
+///  ```
+pub fn treeify(spec_str: &str) -> Result<ConstraintTree, String> {
+    _treeify(spec_str.to_string())
+}
 
 #[derive(Clone)]
 pub struct VersionSpec {
@@ -357,11 +366,13 @@ impl TryFrom<&str> for VersionSpec {
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let res = get_matcher(input);
         match res {
-            Ok((matcher, _is_exact)) => Ok(VersionSpec { spec_str: input.to_owned(), matcher, _is_exact }),
+            Ok((matcher, _is_exact)) => Ok(VersionSpec { spec_str: input.to_string(), matcher, _is_exact }),
             Err(e) => Err(e)
         }
     }
 }
+
+
 
 #[cfg_attr(tarpaulin, skip)]
 #[cfg(test)]
