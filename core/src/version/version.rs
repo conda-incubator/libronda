@@ -6,18 +6,18 @@
 //! things.
 
 use std::cmp::Ordering;
+use std::convert::From;
 use std::fmt;
 use std::iter::Peekable;
 use std::slice::Iter;
 use std::str::FromStr;
-use std::convert::From;
 
 use serde::Deserialize;
 
 use super::comp_op::CompOp;
-use super::version_part::{VersionPart, ProvideEmptyImpl};
-use super::parsers::conda::conda_parser;
 use super::errors::VersionParsingError;
+use super::parsers::conda::conda_parser;
+use super::version_part::{ProvideEmptyImpl, VersionPart};
 
 /// Version struct, which is a representation for a parsed version string.
 ///
@@ -67,11 +67,17 @@ impl Version {
     ///
     /// assert_eq!(ver.as_str(), "1.2.3");
     /// ```
-    pub fn parse(version: &str, parser: &dyn Fn(&str) -> Result<Vec<VersionPart>, VersionParsingError>) -> Result<Self, VersionParsingError> {
-        let owned_version = version.to_string();
-        match parser(&owned_version) {
-            Ok(parts) => Ok(Self { version: owned_version, parts}),
-            Err(e) => Err(e)
+    pub fn parse(
+        version: &str,
+        parser: &dyn Fn(&str) -> Result<Vec<VersionPart>, VersionParsingError>,
+    ) -> Result<Self, VersionParsingError> {
+        match parser(version) {
+            Ok(parts) => Ok(Self {
+                version: version.to_string(),
+                parts,
+            }),
+            Err(e) => Err(e),
+            _ => unreachable!("Unknown error parsing version"),
         }
     }
 
@@ -152,8 +158,7 @@ impl Version {
 
     pub fn compare_version(&self, other: &Version) -> CompOp {
         // Compare the versions with their peekable iterators
-        Self::compare_iter(self.parts.iter().peekable(),
-                           other.parts.iter().peekable())
+        Self::compare_iter(self.parts.iter().peekable(), other.parts.iter().peekable())
     }
 
     /// Compare this version to the given `other` version.
@@ -188,9 +193,9 @@ impl Version {
             let i1 = &iter.next();
             let i2 = &other_iter.next();
             match (i1, i2) {
-                (Some(i), Some(j)) => match i.partial_cmp(j) {
-                    Some(Ordering::Equal) => continue,
-                    _ => false
+                (Some(i), Some(j)) => match i == j {
+                    false => return false,
+                    _ => {}
                 },
                 // ran out of other, startswith is true
                 (Some(_), None) => return true,
@@ -202,24 +207,28 @@ impl Version {
     }
 
     pub fn compare_to_version(&self, other: &Version, operator: &CompOp) -> bool {
-        // Get the comparison result
-        let result = self.compare_version(other);
-
-        // Match the result against the given operator
-        match result {
-            CompOp::Eq => match operator {
-                &CompOp::Eq | &CompOp::Le | &CompOp::Ge => true,
-                _ => false,
+        match operator {
+            // these look inverted. What we're saying when we have a.b.* (spec) and a.b.c (other version)
+            //     is that a.b.c starts with the spec (up until the star)
+            CompOp::StartsWith => other.startswith(self),
+            CompOp::NotStartsWith => !other.startswith(self),
+            CompOp::Compatible => unimplemented!(),
+            CompOp::Incompatible => unimplemented!(),
+            _ => match self.compare_version(other) {
+                CompOp::Eq => match operator {
+                    &CompOp::Eq | &CompOp::Le | &CompOp::Ge => true,
+                    _ => false,
+                },
+                CompOp::Lt => match operator {
+                    &CompOp::Ne | &CompOp::Gt | &CompOp::Ge => true,
+                    _ => false,
+                },
+                CompOp::Gt => match operator {
+                    &CompOp::Ne | &CompOp::Lt | &CompOp::Le => true,
+                    _ => false,
+                },
+                _ => unreachable!(),
             },
-            CompOp::Lt => match operator {
-                &CompOp::Ne | &CompOp::Lt | &CompOp::Le => true,
-                _ => false,
-            },
-            CompOp::Gt => match operator {
-                &CompOp::Ne | &CompOp::Gt | &CompOp::Ge => true,
-                _ => false,
-            },
-            _ => unreachable!(),
         }
     }
 
@@ -261,32 +270,36 @@ impl Version {
             let i1 = &iter.next();
             let i2 = &other_iter.next();
             let _cmp = match (i1, i2) {
-                (Some(i), None) => match i.partial_cmp(&&i.get_empty()) {
-                    Some(Ordering::Less) => return CompOp::Lt,
-                    Some(Ordering::Greater) => return CompOp::Gt,
-                    Some(Ordering::Equal) => return CompOp::Eq,
-                    _ => panic!("Ignoring ge, le, ne")
-                },
-                (None, Some(j)) => match &j.get_empty().partial_cmp(j) {
-                    Some(Ordering::Less) => return CompOp::Lt,
-                    Some(Ordering::Greater) => return CompOp::Gt,
-                    Some(Ordering::Equal) => return CompOp::Eq,
-                    _ => panic!("Ignoring ge, le, ne")
-                },
+                // normal - both places defined
                 (Some(i), Some(j)) => match i.partial_cmp(j) {
                     Some(Ordering::Greater) => return CompOp::Gt,
                     Some(Ordering::Less) => return CompOp::Lt,
                     // This is the only loop branch that continues
                     Some(Ordering::Equal) => Ordering::Equal,
-                    _ => panic!("Ignoring ge, le, ne")
+                    _ => unreachable!("Ignoring ge, le, ne"),
                 },
+
+                // first version has more places. get_empty is a type-specific value that is "zero"
+                //     or whatever the equivalent is for a type (e.g. empty string)
+                (Some(i), None) => match i.partial_cmp(&&i.get_empty()) {
+                    Some(Ordering::Less) => return CompOp::Lt,
+                    Some(Ordering::Greater) => return CompOp::Gt,
+                    Some(Ordering::Equal) => return CompOp::Eq,
+                    _ => unreachable!("Ignoring ge, le, ne"),
+                },
+                (None, Some(j)) => match &j.get_empty().partial_cmp(j) {
+                    Some(Ordering::Less) => return CompOp::Lt,
+                    Some(Ordering::Greater) => return CompOp::Gt,
+                    Some(Ordering::Equal) => return CompOp::Eq,
+                    _ => unreachable!("Ignoring ge, le, ne"),
+                },
+
                 // both versions are the same length and are equal for all values
-                (None, None) => return CompOp::Eq
+                (None, None) => return CompOp::Eq,
             };
         }
     }
 }
-
 
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -325,6 +338,7 @@ mod tests {
     use crate::CompOp;
     // use crate::version_part::VersionPart;
 
+    //use super::test::{black_box, Bencher};
     use super::Version;
     use crate::version::errors::VersionParsingError;
 
@@ -336,11 +350,11 @@ mod tests {
     }
     parametrize_versions!(from);
 
-//    fn from_with_invalid_versions(v_string: &str, n_parts: usize) {
-//        // Test whether parsing works for each test invalid version
-//        assert!(Version::from(v_string).is_none());
-//    }
-//    parametrize_versions_errors!(from_with_invalid_versions);
+    //    fn from_with_invalid_versions(v_string: &str, n_parts: usize) {
+    //        // Test whether parsing works for each test invalid version
+    //        assert!(Version::from(v_string).is_none());
+    //    }
+    //    parametrize_versions_errors!(from_with_invalid_versions);
 
     fn as_str(v_string: &str, _n_parts: usize) {
         let v: Version = v_string.parse().unwrap();
@@ -383,16 +397,10 @@ mod tests {
         let version_b: Version = b.parse().unwrap();
 
         // Compare them
-        assert_eq!(
-            version_a.compare_version(&version_b),
-            operator.clone(),
-        );
+        assert_eq!(version_a.compare_version(&version_b), operator.clone(),);
 
         // Compare them
-        assert_eq!(
-            version_a.compare_str(b),
-            operator.clone(),
-        );
+        assert_eq!(version_a.compare_str(b), operator.clone(),);
     }
     parametrize_versions_set!(compare);
 
@@ -424,14 +432,11 @@ mod tests {
     #[test]
     fn debug() {
         let a: Version = "1.2.3".into();
-        assert_eq!(
-            format!("{:?}", a),
-            "[Integer(1), Integer(2), Integer(3)]",
-        );
-//        assert_eq!(
-//            format!("{:#?}", Version::from("1.2.3").unwrap()),
-//            "[\n    Integer(\n        1,\n    ),\n    Integer(\n        2,\n    ),\n    Integer(\n        3,\n    ),\n]",
-//        );
+        assert_eq!(format!("{:?}", a), "[Integer(1), Integer(2), Integer(3)]",);
+        //        assert_eq!(
+        //            format!("{:#?}", Version::from("1.2.3").unwrap()),
+        //            "[\n    Integer(\n        1,\n    ),\n    Integer(\n        2,\n    ),\n    Integer(\n        3,\n    ),\n]",
+        //        );
     }
 
     fn partial_cmp(a: &str, b: &str, operator: &CompOp) {
@@ -479,7 +484,7 @@ mod tests {
         assert_ne!(a, "1.2.3".into());
     }
 
-    # [test]
+    #[test]
     fn test_less_specific_less_than_more_specific() {
         // 0.4 < 0.4.0
         let a: Version = "0.4".parse().unwrap();
@@ -487,7 +492,7 @@ mod tests {
         assert_eq!(a == b, true);
     }
 
-    # [test]
+    #[test]
     fn test_rc_greater_than_earlier_version_less_than_release() {
         // 0.4.0 < 0.4.1.rc < 0.4.1
         let a: Version = "0.4.0".parse().unwrap();
@@ -497,7 +502,7 @@ mod tests {
         assert_eq!(b < c, true);
     }
 
-    # [test]
+    #[test]
     fn test_case_insensitive_rc() {
         // 0.4.1.rc == 0.4.1.RC
         let a: Version = "0.4.1.rc".parse().unwrap();
@@ -505,7 +510,7 @@ mod tests {
         assert_eq!(a == b, true);
     }
 
-    # [test]
+    #[test]
     fn test_lexicographical_sort_numbers() {
         // 0.5a1 < 0.5a2
         let a: Version = "0.5a1".parse().unwrap();
@@ -513,7 +518,7 @@ mod tests {
         assert_eq!(a < b, true);
     }
 
-    # [test]
+    #[test]
     fn test_lexicographical_sort() {
         // 0.5a2 < 0.5b1
         let a: Version = "0.5a2".parse().unwrap();
@@ -521,7 +526,7 @@ mod tests {
         assert_eq!(a < b, true);
     }
 
-    # [test]
+    #[test]
     fn test_dev_special_case_horribleness() {
         // 1.0 < 1.1dev1 < 1.1a1 < 1.1.0dev1 == 1.1.dev1
         let a: Version = "1.0".parse().unwrap();
@@ -536,7 +541,7 @@ mod tests {
         // assert_eq!(d == e, true);
     }
 
-    # [test]
+    #[test]
     fn test_rc_with_number() {
         let a: Version = "1.1.dev1".parse().unwrap();
         let b: Version = "1.1.a1".parse().unwrap();
@@ -547,7 +552,7 @@ mod tests {
         assert_eq!(c < d, true);
     }
 
-    # [test]
+    #[test]
     fn test_post_gt_release() {
         let a: Version = "1.1.0".parse().unwrap();
         let b: Version = "1.1.0post1".parse().unwrap();
@@ -558,7 +563,7 @@ mod tests {
         assert_eq!(b < c, true);
     }
 
-    # [test]
+    #[test]
     fn test_epoch() {
         let a: Version = "1996.07.12".parse().unwrap();
         let b: Version = "1!0.4.1".parse().unwrap();
@@ -568,4 +573,19 @@ mod tests {
         assert_eq!(b < c, true);
         assert_eq!(c < d, true);
     }
+
+    #[test]
+    fn test_startswith() {
+        let b: Version = "0.4.1".parse().unwrap();
+        let c: Version = "0.4".parse().unwrap();
+        assert_eq!(b.startswith(&c), true);
+        assert_eq!(c.startswith(&b), false);
+    }
+
+    // #[bench]
+    // fn bench_parsing_basic(b: &mut Bencher) {
+    //     b.iter(|| {
+    //         black_box(Version::from("1.2.3"));
+    //     })
+    // }
 }

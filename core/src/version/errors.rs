@@ -40,8 +40,10 @@ impl Error for VersionParsingError {
             VersionParsingError::Message(ref msg) => msg,
             VersionParsingError::DisallowedCharacter => "Disallowed character in string",
             VersionParsingError::DuplicatedEpochCharacter => "Duplicate epoch character (!)",
-            VersionParsingError::DuplicatedLocalSeparatorCharacter => "duplicated local version separator (+)",
-            VersionParsingError::UnknownParseError => "Unknown parse error"
+            VersionParsingError::DuplicatedLocalSeparatorCharacter => {
+                "duplicated local version separator (+)"
+            }
+            VersionParsingError::UnknownParseError => "Unknown parse error",
         }
     }
 }

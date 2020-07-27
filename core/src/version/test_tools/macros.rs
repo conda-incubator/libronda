@@ -5,32 +5,32 @@
 /// macro_rules macros or items containing macros.
 
 macro_rules! parametrize_versions {
-        ( $test:ident ) => {
-            paste::item! {
-            #[rstest(v_string, n_parts,
-            case::one_int("1", 1),
-            case::two_ints("1.2", 2),
-            case::four_ints("1.2.3.4", 4),
-            case::eight_ints("1.2.3.4.5.6.7.8", 8),
-            case::zero("0", 1),
-            case::three_zeros("0.0.0", 3),
-            case::trailing_zeros_kept("1.0.0", 3),
-            case::leading_zeros_kept("0.0.1", 3),
-            case::empty_string("", 1),
-//            case::only_period(".", 1),
-//            case::only_three_periods("...", 1),
-            // 2dev is considered one piece
-            case::dev_post_version("1.2dev", 3),
-            // 2.dev is considered two pieces (and dev has an implicit leading zero and trailing zero)
-            case::dev_post_version_with_dot("1.2.dev", 3),
-            case::dev_post_version_with_dot_and_post_rev("1.2.dev2", 4),
-            case::post_rev_after_period("1.2.alpha.4", 4),
-            )]
-            fn [< _ $test >] (v_string: &str, n_parts: usize) {
-                $test(v_string, n_parts)
-            }
-        }
-    }
+    ( $test:ident ) => {
+        paste::item! {
+                    #[rstest(v_string, n_parts,
+                    case::one_int("1", 1),
+                    case::two_ints("1.2", 2),
+                    case::four_ints("1.2.3.4", 4),
+                    case::eight_ints("1.2.3.4.5.6.7.8", 8),
+                    case::zero("0", 1),
+                    case::three_zeros("0.0.0", 3),
+                    case::trailing_zeros_kept("1.0.0", 3),
+                    case::leading_zeros_kept("0.0.1", 3),
+                    case::empty_string("", 1),
+        //            case::only_period(".", 1),
+        //            case::only_three_periods("...", 1),
+                    // 2dev is considered one piece
+                    case::dev_post_version("1.2dev", 3),
+                    // 2.dev is considered two pieces (and dev has an implicit leading zero and trailing zero)
+                    case::dev_post_version_with_dot("1.2.dev", 3),
+                    case::dev_post_version_with_dot_and_post_rev("1.2.dev2", 4),
+                    case::post_rev_after_period("1.2.alpha.4", 4),
+                    )]
+                    fn [< _ $test >] (v_string: &str, n_parts: usize) {
+                        $test(v_string, n_parts)
+                    }
+                }
+    };
 }
 
 //macro_rules! parametrize_versions_errors {
@@ -136,23 +136,23 @@ macro_rules! parametrize_match_evaluation {
              case::geq(">=1.7", "1.7.0", true),
              case::gt(">1.7", "1.7.0", false),
              case::geq2(">=1.7", "1.6.7", false),
-             case::greater_alpha("2013a", ">2013b", false),
-             case::inverse_greater_alpha("2013k", ">2013b", true),
-             case::gt2("3.0.0", ">2013b", false),
-             case::release_greater_than_alpha("1.0.0", ">1.0.0a", true),
-             case::release_greater_than_star("1.0.0", ">1.0.0*", true),
-             case::star("1.0", "1.0*", true),
-             case::star_with_more_precision("1.0.0", "1.0*", true),
-             case::star_with_less_precision("1.0", "1.0.0*", true),
-             case::star_nomatch("1.0.1", "1.0.0*", false),
+             case::greater_alpha(">2013b", "2013a",  false),
+             case::inverse_greater_alpha(">2013b", "2013k", true),
+             case::gt2(">2013b", "3.0.0",  false),
+             case::release_greater_than_alpha(">1.0.0a", "1.0.0", true),
+             case::release_greater_than_star(">1.0.0*", "1.0.0", true),
+             case::star("1.0*", "1.0", true),
+             case::star_with_more_precision("1.0*", "1.0.0", true),
+             case::star_with_less_precision("1.0.0*", "1.0", true),
+             case::star_nomatch("1.0.0*", "1.0.1", false),
              case::star_match_alpha("2013a", "2013a*", true),
              case::star_mismatch_same_precision("2013a", "2013b*", false),
-             case::star_match_alpha_sub("2013ab", "2013a*", true),
-             case::crazy_mismatch("1.3.4", "1.2.4*", false),
-             case::star_post("1.2.3+4.5.6", "1.2.3*", true),
-             case::star_post_one_place("1.2.3+4.5.6", "1.2.3+4*", true),
-             case::star_post_one_place_mismatch("1.2.3+4.5.6", "1.2.3+5*", false),
-             case::star_post_minor_mismatch_before_post("1.2.3+4.5.6", "1.2.4+4*", false),
+             case::star_match_alpha_sub("2013a*", "2013ab", true),
+             case::crazy_mismatch("1.2.4*", "1.3.4", false),
+             case::star_post("1.2.3*", "1.2.3+4.5.6", true),
+             case::star_post_one_place("1.2.3+4*", "1.2.3+4.5.6", true),
+             case::star_post_one_place_mismatch("1.2.3+5*", "1.2.3+4.5.6", false),
+             case::star_post_minor_mismatch_before_post("1.2.4+4*", "1.2.3+4.5.6", false),
              // star_no_match
              case("=3.3", "3.3.1", true),
              case("=3.3", "3.3", true),
@@ -186,19 +186,27 @@ macro_rules! parametrize_match_evaluation {
                 $test(a, b, result)
             }
         }
-    }
+    };
 }
 
 macro_rules! parametrize_not_eq_star {
     ( $test:ident ) => {
         paste::item! {
-            #[rstest(a, b, result,
+                    #[rstest(a, b, result,
 
-)]
-#[allow(non_snake_case)]
-fn [< _ $test>] (a: &str, b: &str, result: bool) {
-$test(a, b, result)
+        )]
+        #[allow(non_snake_case)]
+        fn [< _ $test>] (a: &str, b: &str, result: bool) {
+        $test(a, b, result)
+        }
+        }
+    };
 }
-}
-}
+
+// https://github.com/foresterre/parameterized/blob/34a45dbbea33d8f26acf3c6444bb0702077095d6/src/lib.rs#L17
+macro_rules! ide {
+    () => {
+        #[test]
+        fn __mark_with_test_intent() {}
+    };
 }
